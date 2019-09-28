@@ -183,6 +183,33 @@ fellows <- fellows %>%
 
 ```
 
+# Clean the Area field a little
+
+```{r}
+
+clean_area <- function(x) {
+  stringr::str_remove(x, "(Website|Twitter).*$") %>%
+  stringr::str_squish()
+}
+
+fellows <- fellows %>%
+  mutate(area = clean_area(area))
+
+```
+
+# Clean Affiliation and Title
+
+```{r}
+fellows <- fellows %>%
+  mutate(affiliation = replace_na(affiliation, "None Provided"), 
+         title = replace_na(title, "None Provided"),
+         area = replace_na(area, "None Provided"),
+         affil_short = str_trim(str_remove_all(affiliation, "(School of.*?,)|(College of.*?,)|(Division of.*?,)|(Department of.*?,)|(, .*?Department)|(Center.*?,)")), 
+         title_short = str_trim(str_remove_all(title, ",.*$")),
+         area_short = str_trim(str_remove_all(area, ",.*$")))
+```
+
+
 ## Write out the data to a CSV
 
 ```{r}
@@ -197,19 +224,22 @@ write_csv(fellows, "data/macarthur-mfd.csv")
 There's a gotcha with objects like `bio_pages`: they cannot be straightforwardly saved to R's native data format with `save()`. The XML files are stored with external pointers to their content and cannot be "serialized" in a way that saves their content properly. If you try, when you `load()` the saved object you will get complaints about missing pointers. So instead, we'll unspool our list and  save each fellow's page individually. Then if we want to rerun this analysis without crawling everything again, we will load them in from our local saved versions using `read_html()`.
 
 ```{r}
-## Get clean file names
-fnames <-paste0("raw/macfound.org/", janitor::make_clean_names(fellows$name),".html") 
+
+## Get a list containing every fellow's webpage, 
+## Drop the safely() error codes from the initial scrape, and 
+## and also drop any NULL entries
+page_list <- pluck(bio_pages, "result") %>% 
+  compact()
+
+## Make a vector of clean file names of the form "raw/macfound.org/jane_doe.html"
+## One for every fellow. Same order as the page_list.
+fnames <-paste0("raw/macfound.org/", 
+                janitor::make_clean_names(fellows$name),
+                ".html") 
 names(fnames) <- fellows$name   
 
-length(fnames)
-
-## Get every webpage, dropping the safely() error codes and NULL entries
-page_list <- pluck(bio_pages, "result") %>% 
-  compact
-
-length(page_list)
-
-## Walk the page_list, saving each HTML file with its respective clean file name
+## Walk the elements of the page list and the file names to 
+## save each HTML file under is respective clean file name
 walk2(page_list, fnames, ~ write_xml(.x, file = .y))
 
 ```
@@ -220,13 +250,22 @@ walk2(page_list, fnames, ~ write_xml(.x, file = .y))
   
 ```{r}
 
-p <-   ggplot(data = fellows, 
-              mapping = aes(x = year, y = age)) 
-p +   geom_boxplot(outlier.colour = NA, mapping = aes(group = year)) + 
-  geom_jitter(alpha = 0.4, shape = 1, position = position_jitter(height = 0.2)) + 
+p <- ggplot(data = fellows, 
+              mapping = aes(x = year, y = age, group = year))
+
+p + geom_jitter(alpha = 0.5, shape = 1, position = position_jitter()) +  
+  geom_boxplot(outlier.size = 0, 
+                   fill = my.colors("bly")[2], 
+                   alpha = 0.2) + 
   theme(legend.position = "top") +
   labs(x = "Year of Award", y = "Age at Time of Award", 
-       title = "Age Distribution of MacArthur Winners over time")
+       title = "Age Distribution of MacArthur Award Winners over time", 
+       caption = "@kjhealy / socviz.co Data: John D. and Catherine T. MacArthur Foundation.") + 
+  theme(axis.text = element_text(size = rel(1.2)),
+        axis.title = element_text(size = rel(1.2)), 
+        plot.title = element_text(size = rel(1.2)),
+        plot.caption = element_text(size = rel(1.2)))
+  
 
 p <-   ggplot(data = subset(fellows, !is.na(sex)), 
               mapping = aes(x = year, y = age, 
@@ -260,4 +299,41 @@ p +   geom_boxplot(outlier.colour = NA,
 
 
 ```
+
+
+```{r}
+
+fellows %>% 
+  group_by(affil_short) %>%
+  tally() %>%
+  mutate(freq = n / sum(n),
+         pct = round((freq*100), 1)) %>%
+  arrange(desc(pct)) %>% 
+  filter(n > 2) %>%
+  select(affil_short, n, pct)
+
+
+fellows %>% 
+  group_by(title_short) %>%
+  tally() %>%
+  mutate(freq = n / sum(n),
+         pct = round((freq*100), 1)) %>%
+  arrange(desc(pct)) %>% 
+  filter(n > 2) %>%
+  select(title_short, n, pct)
+
+fellows %>% 
+  group_by(area_short) %>%
+  tally() %>%
+  mutate(freq = n / sum(n),
+         pct = round((freq*100), 1)) %>%
+  arrange(desc(pct)) %>% 
+  filter(pct >=1) %>%
+  select(area_short, n, pct) %>% 
+  summarize(sum = sum(pct))
+
+
+```
+
+
 
