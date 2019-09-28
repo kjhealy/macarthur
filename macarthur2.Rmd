@@ -13,6 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(rvest)
 library(socviz)
+library(ggrepel)
 library(showtext)
 showtext_auto()
 library(myriad)
@@ -259,12 +260,18 @@ p + geom_jitter(alpha = 0.5, shape = 1, position = position_jitter()) +
                    alpha = 0.2) + 
   theme(legend.position = "top") +
   labs(x = "Year of Award", y = "Age at Time of Award", 
-       title = "Age Distribution of MacArthur Award Winners over time", 
-       caption = "@kjhealy / socviz.co Data: John D. and Catherine T. MacArthur Foundation.") + 
-  theme(axis.text = element_text(size = rel(1.2)),
-        axis.title = element_text(size = rel(1.2)), 
-        plot.title = element_text(size = rel(1.2)),
-        plot.caption = element_text(size = rel(1.2)))
+       title = "Age Distribution of MacArthur Award Winners 1981-2019", 
+       caption = "Kieran Healy @kjhealy socviz.co / Data: MacArthur Foundation.") + 
+  scale_x_date(breaks = c(int_to_year(1981), 
+                          int_to_year(1991), 
+                          int_to_year(2001), 
+                          int_to_year(2011), 
+                          int_to_year(2019)), 
+               labels = c("1981", "1991", "2001", "2011", "2019")) + 
+  theme(axis.text = element_text(size = rel(1.25)),
+        axis.title = element_text(size = rel(1.25)), 
+        plot.title = element_text(size = rel(1.75)),
+        plot.caption = element_text(size = rel(1.1)))
   
 
 p <-   ggplot(data = subset(fellows, !is.na(sex)), 
@@ -326,11 +333,22 @@ fellows %>%
   group_by(area_short) %>%
   tally() %>%
   mutate(freq = n / sum(n),
-         pct = round((freq*100), 1)) %>%
+         pct = round((freq*100), 1), 
+         n_lab = paste0(area_short," (", n, ")")) %>%
   arrange(desc(pct)) %>% 
   filter(pct >=1) %>%
-  select(area_short, n, pct) %>% 
-  summarize(sum = sum(pct))
+  select(n_lab, n, pct) %>%
+  ggplot(mapping = aes(x = pct, y = reorder(n_lab, pct))) + 
+  geom_point(size = 3) + 
+  labs(x = "Percent of All Awards", 
+       y = NULL, 
+       title = "MacArthur Fellowships by Area, 1981-2019", 
+       subtitle = "Areas with one percent or more of all awards",
+      caption = "Kieran Healy @kjhealy socviz.co / Data: MacArthur Foundation.") +
+  theme(axis.text = element_text(size = rel(1.25)),
+        axis.title = element_text(size = rel(1.25)), 
+        plot.title = element_text(size = rel(1.75)),
+        plot.caption = element_text(size = rel(1.1)))  
 
 
 ```
