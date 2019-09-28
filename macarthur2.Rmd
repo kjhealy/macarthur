@@ -1,0 +1,263 @@
+---
+title: "MacArthur Data"
+author: "Kieran Healy"
+date: "9/27/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(rvest)
+library(socviz)
+library(showtext)
+showtext_auto()
+library(myriad)
+import_myriad_semi()
+
+theme_set(theme_myriad_semi())
+```
+
+# Get a List of all MacArthur Fellows 
+
+```{r}
+
+urls <- paste0("https://www.macfound.org/fellows/", 1:1054, "/")
+
+
+
+url <- "https://en.wikipedia.org/wiki/MacArthur_Fellows_Program"
+page <- read_html(url) 
+content <- html_node(page, "#mw-content-text")
+years <- html_nodes(content, "h3")
+winners <- html_nodes(page, ".column-width")
+```
+
+# Grab all their Fellow pages and put them in a list
+
+Don't do this more than once! 
+
+```{r, eval = FALSE}
+
+## Grab the full Macfound page of every awardee. 
+bio_pages <- urls %>% 
+  map(~ {
+    message(glue::glue("* parsing: {.x}"))
+    Sys.sleep(5) # try to be polite
+    safely(read_html)(.x)
+  })
+
+```
+
+
+# Parse the pages
+
+
+```{r}
+get_fellow <- function(x) {
+    ifelse(is.null(x), return(NA), FALSE)
+  
+    f_name <- rvest::html_node(x, ".has-top-margin") %>%
+          rvest::html_text(trim = TRUE)
+      
+    f_year <- rvest::html_node(x, "h2") %>%
+          rvest::html_text(trim = TRUE) %>%
+          stringr::str_extract("Class of( January| February| March| April| May| June| July| August| September| October| November| December)?\\s+\\d{4}") %>%
+          stringr::str_extract("\\d{4}")
+  
+    out <- rvest::html_node(x, ".photo-bio__content") %>%
+          rvest::html_text(trim = TRUE) %>%
+          stringr::str_remove_all("\n              ")
+        
+    f_title <- str_trim(str_match(out, "Title (.*?) Affiliation")[,2])
+    f_affil <- str_trim(str_match(out, "Affiliation (.*?) Location")[,2])
+    f_loc <- str_trim(str_match(out, "Location (.*?) Age")[,2])
+    f_age <- str_trim(str_extract(out, "Age(.*?)\\d{2}")) %>% str_extract("\\d{2}")
+    f_area <- str_trim(str_match(out, "Area of Focus (.*?)$")[,2])
+
+    f_bio <- rvest::html_node(x, ":nth-child(3) .text-content--small") %>%
+            rvest::html_text()     
+    
+    record <- tibble(
+      name = f_name,
+      year = f_year,
+      title = f_title,
+      affiliation = f_affil,
+      location = f_loc,
+      age = f_age,
+      area = f_area,
+      bio = f_bio)
+    
+    record
+  }
+
+```
+
+```{r}
+
+fellows <- bio_pages %>% 
+  pluck("result") %>% # Get the webpages
+  compact() %>% # Drop any empties
+  map(get_fellow) %>% # Generate the individual records
+  bind_rows() # and combine
+
+fellows
+
+```
+
+# A bit more cleaning
+
+```{r}
+
+infer_gender <- function(bio){
+  m_test <- str_detect(bio, "(\\b[Hh]e is)|(\\b[Hh]e was)|\\b[H]is\\b|\\b([Hh]e joined)|(\\b[Hh]e has)|\\b[Hh]e explore|\\b[Hh]e also|\\b[Hh]e produced|\\b[Hh]e founded|\\b[Hh]e worked|\\b[Hh]is work|\\b[Hh]is research")
+  f_test <- str_detect(bio, "(\\b[Ss]he is)|(\\b[Ss]he was)|\\b[H]er\\b|\\b([Ss]he joined)|(\\b[Ss]he has)|\\b[Ss]he explore|\\b[Ss]he also|\\b[Ss]he produced|\\b[Ss]he founded|\\b[Ss]he worked|\\b[Hh]er work|\\b[Hh]er research")
+  
+  out <- case_when(
+    m_test == TRUE & f_test == FALSE ~ "Male", 
+    m_test == FALSE & f_test == TRUE ~ "Female",
+    TRUE ~ NA_character_
+    )
+  out
+}
+
+fellows <- fellows %>%
+  mutate(age = as.integer(age),
+         year = int_to_year(as.integer(year)),
+         sex = infer_gender(bio)) %>%
+  select(name, year, age, sex, title, everything())
+
+# tmp <- fellows %>% select(name, bio)
+# tmp <- tmp %>%
+#   mutate(sex = infer_gender(bio)) 
+# 
+# tmp %>% filter(is.na(sex)) %>% select(name)
+
+## Eiko and Koma Otake
+koma <- fellows %>% filter(name == "Eiko and Koma Otake")
+koma$name <- "Koma Otake"
+
+eiko <- fellows %>% filter(name == "Eiko and Koma Otake")
+eiko$name <- "Eiko Otake"
+
+fellows <- fellows %>% filter(name %nin% "Eiko and Koma Otake")
+fellows <- rbind(fellows, eiko, koma)
+
+## Manually code the remaining gender vals
+fellows %>% filter(is.na(sex)) %>% select(name) %>% data.frame()
+
+fellows <- fellows %>%
+  mutate(sex = case_when(
+  name == "Lin He" ~ as.character("Female"),
+  name == "Aaron Shirley" ~ as.character("Male"),
+  name == "Michael Lerner" ~ as.character("Male"),
+  name == "Edward V. Roberts" ~ as.character("Male"),
+  name == "Aaron Lansky" ~ as.character("Male"),
+  name == "Patricia Locke" ~ as.character("Female"),
+  name == "Robert H. McCabe" ~ as.character("Male"),
+  name == "Jeraldyne Blunden" ~ as.character("Female"),
+  name == "Martin Daniel Eakes" ~ as.character("Male"),
+  name == "Louis Massiah" ~ as.character("Male"),
+  name == "Eiko Otake" ~ as.character("Female"),
+  name == "Koma Otake" ~ as.character("Male"),
+  name == "Kun-Liang Guan" ~ as.character("Male"),
+  name == "William W. McDonald" ~ as.character("Male"),
+  name == "Juan Martin Maldacena" ~ as.character("Male"),
+  name == "Ken Vandermark" ~ as.character("Male"),
+  name == "Lucy Blake" ~ as.character("Female"),
+  name == "Katherine Gottlieb" ~ as.character("Female"),
+  name == "Nancy Siraisi" ~ as.character("Female"),
+  name == "Whitfield Lovell" ~ as.character("Male"),
+  name == "Junot Díaz" ~ as.character("Male"),
+  name == "Jeffrey Brenner" ~ as.character("Male"),
+  name == "Michelle Dorrance" ~ as.character("Female"),
+  name == "Nicole Eisenman" ~ as.character("Female"),
+  name == "LaToya Ruby Frazier" ~ as.character("Female"),
+  name == "Taylor Mac" ~ as.character("Male"),
+  #name == "Wu Tsang" ~ as.character(), ## one nonbinary case
+  name == "Cameron Rowland" ~ as.character("Male"),
+  TRUE ~ sex))
+
+```
+
+## Write out the data to a CSV
+
+```{r}
+write_csv(fellows, "data/macarthur-mfd.csv")
+
+## write_csv(data, "~/Documents/courses/visualizingsociety.com/static/data/macarthur.csv")
+
+```
+
+## Save the scraped webpages
+
+There's a gotcha with objects like `bio_pages`: they cannot be straightforwardly saved to R's native data format with `save()`. The XML files are stored with external pointers to their content and cannot be "serialized" in a way that saves their content properly. If you try, when you `load()` the saved object you will get complaints about missing pointers. So instead, we'll unspool our list and  save each fellow's page individually. Then if we want to rerun this analysis without crawling everything again, we will load them in from our local saved versions using `read_html()`.
+
+```{r}
+## Get clean file names
+fnames <-paste0("raw/macfound.org/", janitor::make_clean_names(fellows$name),".html") 
+names(fnames) <- fellows$name   
+
+length(fnames)
+
+## Get every webpage, dropping the safely() error codes and NULL entries
+page_list <- pluck(bio_pages, "result") %>% 
+  compact
+
+length(page_list)
+
+## Walk the page_list, saving each HTML file with its respective clean file name
+walk2(page_list, fnames, ~ write_xml(.x, file = .y))
+
+```
+
+
+
+## Make some plots
+  
+```{r}
+
+p <-   ggplot(data = fellows, 
+              mapping = aes(x = year, y = age)) 
+p +   geom_boxplot(outlier.colour = NA, mapping = aes(group = year)) + 
+  geom_jitter(alpha = 0.4, shape = 1, position = position_jitter(height = 0.2)) + 
+  theme(legend.position = "top") +
+  labs(x = "Year of Award", y = "Age at Time of Award", 
+       title = "Age Distribution of MacArthur Winners over time")
+
+p <-   ggplot(data = subset(fellows, !is.na(sex)), 
+              mapping = aes(x = year, y = age, 
+                       color = sex,
+                       fill = sex)) 
+p + geom_jitter(alpha = 0.8, shape = 1, position = position_jitter(height = 0.2)) + 
+  geom_smooth() +
+  theme(legend.position = "top") +
+  labs(x = "Year of Award", y = "Age at Time of Award", 
+       title = "Age Distribution of MacArthur Winners over time")
+
+fellows %>%
+  group_by(sex) %>%
+  tally() %>%
+ mutate(pct = (n / sum(n))*100)
+
+p <-   ggplot(data = subset(fellows, !is.na(sex)), 
+              mapping = aes(x = year, y = age, color = sex, fill = sex)) 
+p +   geom_boxplot(outlier.colour = NA, 
+                   mapping = aes(group = interaction(year, sex), 
+                                 color = sex,
+                                 fill = sex), alpha = 0.3) + 
+  geom_jitter(alpha = 0.4, shape = 1, 
+              position = position_jitter(height = 0.2)) + 
+  theme(legend.position = "top") +
+  scale_fill_manual(values = my.colors("bly")) + 
+  scale_color_manual(values = my.colors("bly")) +
+  labs(x = "Year of Award", y = "Age at Time of Award", 
+       color = "Gender", fill = "Gender",
+       title = "Age Distribution of MacArthur Winners over time")
+
+
+```
+
