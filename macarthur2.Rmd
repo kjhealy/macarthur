@@ -216,7 +216,9 @@ fellows <- fellows %>%
 ```{r}
 write_csv(fellows, "data/macarthur-mfd.csv")
 
-## write_csv(data, "~/Documents/courses/visualizingsociety.com/static/data/macarthur.csv")
+## Partital for problem set:
+## fellows %>% select(name, year, age, sex) %>%
+##  write_csv("~/Documents/courses/visualizingsociety.com/static/data/macarthur.csv")
 
 ```
 
