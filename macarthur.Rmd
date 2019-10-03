@@ -25,7 +25,11 @@ import_myriad_semi()
 theme_set(theme_myriad_semi())
 ```
 
-# Get a List of all MacArthur Fellows from `macfound.org` and put them in a list. Don't do this more than once! 
+# Initial data scraping and saving to local storage
+
+## Scrape the Website
+
+Get a List of all MacArthur Fellows from `macfound.org` and put them in a list. Don't do this more than once! This code is not evaluated when knitting the document, because we only have to do it once.
 
 ```{r, eval = FALSE, echo = TRUE}
 
@@ -43,11 +47,13 @@ bio_pages <- urls %>%
 
 ```
 
-# Save the scraped webpages
+## Save the scraped webpages locally
 
 There's a gotcha with objects like `bio_pages`: they cannot be straightforwardly saved to R's native data format with `save()`. The XML files are stored with external pointers to their content and cannot be "serialized" in a way that saves their content properly. If you try, when you `load()` the saved object you will get complaints about missing pointers. So instead, we'll unspool our list and  save each fellow's page individually. Then if we want to rerun this analysis without crawling everything again, we will load them in from our local saved versions using `read_html()`.
 
-```{r localsave}
+Again, this code chunk is shown but not run, as we only do it once. 
+
+```{r localsave, eval = FALSE, echo = TRUE}
 
 ## Get a list containing every fellow's webpage, 
 ## Drop the safely() error codes from the initial scrape, and 
@@ -68,7 +74,9 @@ walk2(page_list, fnames, ~ write_xml(.x, file = .y))
 
 ```
 
-# Use the local version from now on
+# Parse the pages 
+
+Using the local data we've saved, we read in a list of all the MacArthur Fellow web pages.
 
 ```{r localparse}
 
@@ -84,7 +92,7 @@ bio_pages <- local_urls %>%
 
 ```
 
-# Parse the pages 
+Next, we parse every webpage to create a record for each fellow. Here's the function that will do the work:
 
 ```{r}
 get_fellow <- function(x) {
@@ -126,6 +134,8 @@ get_fellow <- function(x) {
 
 ```
 
+Now we apply it to the list of pages:
+
 ```{r}
 
 fellows <-  bio_pages %>% 
@@ -134,9 +144,13 @@ fellows <-  bio_pages %>%
   map(get_fellow) %>% # Generate the individual records
   bind_rows() # and combine
 
+fellows
+
 ```
 
-# A bit more cleaning
+# Cleaning the data
+
+We write a function to guess the gender of the fellow from their bio information. 
 
 ```{r}
 
@@ -151,13 +165,23 @@ infer_gender <- function(bio){
     )
   out
 }
+```
 
+We apply it to our data, also making the (character) records of age and fellowship year into integers and dates, respectively:
+
+```{r}
 fellows <- fellows %>%
   mutate(age = as.integer(age),
          year = int_to_year(as.integer(year)),
          sex = infer_gender(bio)) %>%
   select(name, year, age, sex, title, everything())
 
+fellows
+```
+
+## Manually recoding records 
+
+```{r}
 ## Eiko and Koma Otake
 koma <- fellows %>% filter(name == "Eiko and Koma Otake")
 koma$name <- "Koma Otake"
@@ -205,7 +229,7 @@ fellows <- fellows %>%
 
 ```
 
-# Clean the Area field a little
+## Clean the `area` field a little
 
 ```{r}
 
@@ -219,7 +243,7 @@ fellows <- fellows %>%
 
 ```
 
-# Clean Affiliation and Title
+## Clean Affiliation and Title
 
 ```{r}
 fellows <- fellows %>%
@@ -235,12 +259,12 @@ fellows
 ```
 
 
-## Write out the data to a CSV
+## Write out the cleaned data to a CSV file
 
 ```{r}
 write_csv(fellows, "data/macarthur-mfd.csv")
 
-## Partital for problem set:
+## Partital seleciton for class problem set:
 ## fellows %>% select(name, year, age, sex) %>%
 ##  write_csv("~/Documents/courses/visualizingsociety.com/static/data/macarthur.csv")
 
@@ -249,7 +273,7 @@ write_csv(fellows, "data/macarthur-mfd.csv")
 
 
 
-## Make some plots
+# Make some plots
   
 ```{r}
 
@@ -309,6 +333,7 @@ p +   geom_boxplot(outlier.colour = NA,
 
 ```
 
+# Make some tables
 
 ```{r}
 
@@ -365,9 +390,3 @@ fellows %>%
 
 
 ```
-
-
-```{r}
-
-```
-
