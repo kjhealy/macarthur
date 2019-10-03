@@ -9,11 +9,14 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r}
+```{r libraries}
 library(tidyverse)
 library(rvest)
 library(socviz)
 library(ggrepel)
+```
+
+```{r theme}
 library(showtext)
 showtext_auto()
 library(myriad)
@@ -22,28 +25,15 @@ import_myriad_semi()
 theme_set(theme_myriad_semi())
 ```
 
-# Get a List of all MacArthur Fellows 
+# Get a List of all MacArthur Fellows from `macfound.org` and put them in a list. Don't do this more than once! 
 
-```{r}
+```{r, eval = FALSE, echo = TRUE}
 
+## Generate vector of fellow page urls
 urls <- paste0("https://www.macfound.org/fellows/", 1:1054, "/")
 
 
-
-url <- "https://en.wikipedia.org/wiki/MacArthur_Fellows_Program"
-page <- read_html(url) 
-content <- html_node(page, "#mw-content-text")
-years <- html_nodes(content, "h3")
-winners <- html_nodes(page, ".column-width")
-```
-
-# Grab all their Fellow pages and put them in a list
-
-Don't do this more than once! 
-
-```{r, eval = FALSE}
-
-## Grab the full Macfound page of every awardee. 
+## Grab the full Macfound page of every awardee from macfound.org
 bio_pages <- urls %>% 
   map(~ {
     message(glue::glue("* parsing: {.x}"))
@@ -53,9 +43,48 @@ bio_pages <- urls %>%
 
 ```
 
+# Save the scraped webpages
 
-# Parse the pages
+There's a gotcha with objects like `bio_pages`: they cannot be straightforwardly saved to R's native data format with `save()`. The XML files are stored with external pointers to their content and cannot be "serialized" in a way that saves their content properly. If you try, when you `load()` the saved object you will get complaints about missing pointers. So instead, we'll unspool our list and  save each fellow's page individually. Then if we want to rerun this analysis without crawling everything again, we will load them in from our local saved versions using `read_html()`.
 
+```{r localsave}
+
+## Get a list containing every fellow's webpage, 
+## Drop the safely() error codes from the initial scrape, and 
+## and also drop any NULL entries
+page_list <- pluck(bio_pages, "result") %>% 
+  compact()
+
+## Make a vector of clean file names of the form "raw/macfound.org/jane_doe.html"
+## One for every fellow. Same order as the page_list.
+fnames <-paste0("raw/macfound.org/", 
+                janitor::make_clean_names(fellows$name),
+                ".html") 
+names(fnames) <- fellows$name   
+
+## Walk the elements of the page list and the file names to 
+## save each HTML file under is respective clean file name
+walk2(page_list, fnames, ~ write_xml(.x, file = .y))
+
+```
+
+# Use the local version from now on
+
+```{r localparse}
+
+## The filenames we just created
+local_urls <- fs::dir_ls("raw/macfound.org/")
+
+## Grab the full Macfound page of every awardee. 
+bio_pages <- local_urls %>% 
+  map(~ {
+    safely(read_html)(.x)
+  })
+
+
+```
+
+# Parse the pages 
 
 ```{r}
 get_fellow <- function(x) {
@@ -99,13 +128,11 @@ get_fellow <- function(x) {
 
 ```{r}
 
-fellows <- bio_pages %>% 
+fellows <-  bio_pages %>% 
   pluck("result") %>% # Get the webpages
   compact() %>% # Drop any empties
   map(get_fellow) %>% # Generate the individual records
   bind_rows() # and combine
-
-fellows
 
 ```
 
@@ -130,12 +157,6 @@ fellows <- fellows %>%
          year = int_to_year(as.integer(year)),
          sex = infer_gender(bio)) %>%
   select(name, year, age, sex, title, everything())
-
-# tmp <- fellows %>% select(name, bio)
-# tmp <- tmp %>%
-#   mutate(sex = infer_gender(bio)) 
-# 
-# tmp %>% filter(is.na(sex)) %>% select(name)
 
 ## Eiko and Koma Otake
 koma <- fellows %>% filter(name == "Eiko and Koma Otake")
@@ -208,6 +229,9 @@ fellows <- fellows %>%
          affil_short = str_trim(str_remove_all(affiliation, "(School of.*?,)|(College of.*?,)|(Division of.*?,)|(Department of.*?,)|(, .*?Department)|(Center.*?,)")), 
          title_short = str_trim(str_remove_all(title, ",.*$")),
          area_short = str_trim(str_remove_all(area, ",.*$")))
+
+fellows
+
 ```
 
 
@@ -222,30 +246,6 @@ write_csv(fellows, "data/macarthur-mfd.csv")
 
 ```
 
-## Save the scraped webpages
-
-There's a gotcha with objects like `bio_pages`: they cannot be straightforwardly saved to R's native data format with `save()`. The XML files are stored with external pointers to their content and cannot be "serialized" in a way that saves their content properly. If you try, when you `load()` the saved object you will get complaints about missing pointers. So instead, we'll unspool our list and  save each fellow's page individually. Then if we want to rerun this analysis without crawling everything again, we will load them in from our local saved versions using `read_html()`.
-
-```{r}
-
-## Get a list containing every fellow's webpage, 
-## Drop the safely() error codes from the initial scrape, and 
-## and also drop any NULL entries
-page_list <- pluck(bio_pages, "result") %>% 
-  compact()
-
-## Make a vector of clean file names of the form "raw/macfound.org/jane_doe.html"
-## One for every fellow. Same order as the page_list.
-fnames <-paste0("raw/macfound.org/", 
-                janitor::make_clean_names(fellows$name),
-                ".html") 
-names(fnames) <- fellows$name   
-
-## Walk the elements of the page list and the file names to 
-## save each HTML file under is respective clean file name
-walk2(page_list, fnames, ~ write_xml(.x, file = .y))
-
-```
 
 
 
@@ -353,7 +353,21 @@ fellows %>%
         plot.caption = element_text(size = rel(1.1)))  
 
 
+fellows %>% 
+  group_by(location) %>%
+  tally() %>%
+  mutate(freq = n / sum(n),
+         pct = round((freq*100), 1)) %>%
+  arrange(desc(pct)) %>% 
+  filter(pct >= 1) %>%
+  select(location, n, pct)
+
+
+
 ```
 
 
+```{r}
+
+```
 
