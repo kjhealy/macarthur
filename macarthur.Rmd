@@ -11,19 +11,20 @@ output:
   html_document: default
 ---
 
+# Setup
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, 
                       fig.showtext=TRUE)
 ```
 
-```{r libraries, echo = FALSE}
+```{r libraries, message = FALSE}
 library(tidyverse)
 library(rvest)
 library(socviz)
-library(ggrepel)
 ```
 
-```{r theme, echo = FALSE}
+```{r theme, message = FALSE}
 library(showtext)
 showtext_auto()
 library(myriad)
@@ -96,10 +97,10 @@ bio_pages <- local_urls %>%
     safely(read_html)(.x)
   })
 
-## summary first ten
+## quick look at first five items in the list
 summary(bio_pages)[1:5,]
 
-## E.g. first record
+## Quick look inside the first record
 bio_pages[[1]]
 
 ```
@@ -113,10 +114,13 @@ get_fellow <- function(x) {
     f_name <- rvest::html_node(x, ".has-top-margin") %>%
           rvest::html_text(trim = TRUE)
 
-    year_string <- "Class of( January| February| March| April| May| June| July| August| September| October| November| December)?\\s+\\d{4}"        
+    year_regex <- paste0("Class of( January| February| March| April|",
+                          "May| June| July| August| September| October|", 
+                          "November| December)?\\s+\\d{4}")
+    
     f_year <- rvest::html_node(x, "h2") %>%
           rvest::html_text(trim = TRUE) %>%
-          stringr::str_extract(year_string) %>%
+          stringr::str_extract(year_regex) %>%
           stringr::str_extract("\\d{4}")
   
     out <- rvest::html_node(x, ".photo-bio__content") %>%
@@ -169,8 +173,23 @@ We write a function to guess the gender of the fellow from their bio information
 ```{r}
 
 infer_gender <- function(bio){
-  m_test <- str_detect(bio, "(\\b[Hh]e is)|(\\b[Hh]e was)|\\b[H]is\\b|\\b([Hh]e joined)|(\\b[Hh]e has)|\\b[Hh]e explore|\\b[Hh]e also|\\b[Hh]e produced|\\b[Hh]e founded|\\b[Hh]e worked|\\b[Hh]is work|\\b[Hh]is research")
-  f_test <- str_detect(bio, "(\\b[Ss]he is)|(\\b[Ss]he was)|\\b[H]er\\b|\\b([Ss]he joined)|(\\b[Ss]he has)|\\b[Ss]he explore|\\b[Ss]he also|\\b[Ss]he produced|\\b[Ss]he founded|\\b[Ss]he worked|\\b[Hh]er work|\\b[Hh]er research")
+  
+  m_regex <- paste0("(\\b[Hh]e is)|(\\b[Hh]e was)|\\b[H]is\\b|",
+                    "\\b([Hh]e joined)|(\\b[Hh]e has)|",
+                    "\\b[Hh]e explore|\\b[Hh]e also|\\b[Hh]e produced|",
+                    "\\b[Hh]e founded|","\\b[Hh]e also|\\b[Hh]e worked|",
+                    "\\b[Hh]is work|\\b[Hh]is research")
+  
+  f_regex <- paste0("(\\b[Ss]he is)|(\\b[Ss]he was)|\\b[H]er\\b|",
+                    "\\b([Ss]he joined)|(\\b[Ss]he has)|",
+                    "\\b[Ss]he explore|\\b[Ss]he also|\\b[Ss]he produced|",
+                    "\\b[Ss]he founded|","\\b[Ss]he worked|",
+                    "\\b[Hh]er work|\\b[Hh]er research")
+  
+  m_test <- str_detect(bio, m_regex)
+  
+  
+  f_test <- str_detect(bio, f_regex)
   
   out <- case_when(
     m_test == TRUE & f_test == FALSE ~ "Male", 
@@ -289,7 +308,7 @@ write_csv(fellows, "data/macarthur-mfd.csv")
 
 # Make some plots
   
-```{r, fig.width = 12}
+```{r ages, fig.width = 12}
 
 p <- ggplot(data = fellows, 
               mapping = aes(x = year, y = age, group = year))
@@ -314,27 +333,14 @@ p + geom_jitter(alpha = 0.5, shape = 1, position = position_jitter()) +
         plot.caption = element_text(size = rel(1.1)))
 ```
 
-```{r, fig.width = 12}
-
-p <-   ggplot(data = subset(fellows, !is.na(sex)), 
-              mapping = aes(x = year, y = age, 
-                       color = sex,
-                       fill = sex)) 
-p + geom_jitter(alpha = 0.8, shape = 1, position = position_jitter(height = 0.2)) + 
-  geom_smooth() +
-  theme(legend.position = "top") +
-  labs(x = "Year of Award", y = "Age at Time of Award", 
-       title = "Age Distribution of MacArthur Winners over time")
-```
-```{r, fig.width = 12}
+```{r agesex, fig.width = 12}
 fellows %>%
   group_by(sex) %>%
   tally() %>%
- mutate(pct = (n / sum(n))*100)
-
-p <- ggplot(data = subset(fellows, !is.na(sex)), 
-              mapping = aes(x = year, y = age, color = sex, fill = sex)) 
-p + geom_boxplot(outlier.colour = NA, 
+ mutate(pct = (n / sum(n))*100) %>%
+  ggplot(data = subset(fellows, !is.na(sex)), 
+              mapping = aes(x = year, y = age, color = sex, fill = sex))+
+  geom_boxplot(outlier.colour = NA, 
                    mapping = aes(group = interaction(year, sex), 
                                  color = sex,
                                  fill = sex), alpha = 0.3) + 
@@ -346,35 +352,60 @@ p + geom_boxplot(outlier.colour = NA,
   labs(x = "Year of Award", y = "Age at Time of Award", 
        color = "Gender", fill = "Gender",
        title = "Age Distribution of MacArthur Winners over time")
-
-
 ```
 
-# Make some tables
+# Make and plot some tables
 
-```{r}
+```{r affiliation, fig.height=12, fig.width=10}
 
 fellows %>% 
   group_by(affil_short) %>%
   tally() %>%
   mutate(freq = n / sum(n),
-         pct = round((freq*100), 1)) %>%
+         pct = round((freq*100), 1),
+         n_lab = paste0(affil_short," (", n, ")")) %>%
   arrange(desc(pct)) %>% 
   filter(n > 2) %>%
-  select(affil_short, n, pct)
+  select(affil_short, n_lab, pct) %>%
+  ggplot(mapping = aes(x = pct, y = reorder(n_lab, pct))) + 
+  geom_point(size = 3) + 
+  labs(x = "Percent of All Awards", 
+       y = NULL, 
+       title = "MacArthur Fellowships by Affiliation, 1981-2019", 
+       subtitle = "Institutions with three or more affiliated fellows",
+      caption = "Kieran Healy @kjhealy socviz.co / Data: MacArthur Foundation.") +
+  theme(axis.text = element_text(size = rel(1.25)),
+        axis.title = element_text(size = rel(1.25)), 
+        plot.title = element_text(size = rel(1.75)),
+        plot.caption = element_text(size = rel(1.1)))  
+```
 
 
+```{r titles, fig.height=12, fig.width=10}
 fellows %>% 
   group_by(title_short) %>%
   tally() %>%
   mutate(freq = n / sum(n),
-         pct = round((freq*100), 1)) %>%
+         pct = round((freq*100), 1),
+         n_lab = paste0(title_short," (", n, ")")) %>%
   arrange(desc(pct)) %>% 
   filter(n > 2) %>%
-  select(title_short, n, pct)
+  select(n_lab, pct) %>%
+  ggplot(mapping = aes(x = pct, y = reorder(n_lab, pct))) + 
+  geom_point(size = 3) + 
+  labs(x = "Percent of All Awards", 
+       y = NULL, 
+       title = "MacArthur Fellowships by Title, 1981-2019", 
+       subtitle = "Titles mentioned three or more times",
+      caption = "Kieran Healy @kjhealy socviz.co / Data: MacArthur Foundation.") +
+  theme(axis.text = element_text(size = rel(1.25)),
+        axis.title = element_text(size = rel(1.25)), 
+        plot.title = element_text(size = rel(1.75)),
+        plot.caption = element_text(size = rel(1.1)))  
+
 ```
 
-```{r, fig.height=12, fig.width=10}
+```{r areas, fig.height=12, fig.width=10}
 fellows %>% 
   group_by(area_short) %>%
   tally() %>%
@@ -383,7 +414,7 @@ fellows %>%
          n_lab = paste0(area_short," (", n, ")")) %>%
   arrange(desc(pct)) %>% 
   filter(pct >=1) %>%
-  select(n_lab, n, pct) %>%
+  select(n_lab, pct) %>%
   ggplot(mapping = aes(x = pct, y = reorder(n_lab, pct))) + 
   geom_point(size = 3) + 
   labs(x = "Percent of All Awards", 
@@ -397,18 +428,28 @@ fellows %>%
         plot.caption = element_text(size = rel(1.1)))  
 ```
 
-```{r}
+```{r locations, fig.height=12, fig.width=10}
 
 fellows %>% 
   group_by(location) %>%
   tally() %>%
   mutate(freq = n / sum(n),
-         pct = round((freq*100), 1)) %>%
+         pct = round((freq*100), 1),
+         n_lab = paste0(location," (", n, ")")) %>%
   arrange(desc(pct)) %>% 
   filter(pct >= 1) %>%
-  select(location, n, pct)
-
-
+  select(n_lab, pct) %>%
+  ggplot(mapping = aes(x = pct, y = reorder(n_lab, pct))) + 
+  geom_point(size = 3) + 
+  labs(x = "Percent of All Awards", 
+       y = NULL, 
+       title = "MacArthur Fellowships by Location, 1981-2019", 
+       subtitle = "Locations with one percent or more of all awards",
+      caption = "Kieran Healy @kjhealy socviz.co / Data: MacArthur Foundation.") +
+  theme(axis.text = element_text(size = rel(1.25)),
+        axis.title = element_text(size = rel(1.25)), 
+        plot.title = element_text(size = rel(1.75)),
+        plot.caption = element_text(size = rel(1.1)))  
 
 ```
 
