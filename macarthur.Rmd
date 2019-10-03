@@ -6,9 +6,9 @@ author:
   email: "kjhealy@soc.duke.edu"
 date: "9/27/2019"
 output:
+  html_document: default
   pdf_document:
     template: ~/.pandoc/templates/rmd-latex.template
-  html_document: default
 ---
 
 # Setup
@@ -307,7 +307,9 @@ write_csv(fellows, "data/macarthur-mfd.csv")
 
 
 # Make some plots
-  
+
+## Age Distributions
+
 ```{r ages, fig.width = 12}
 
 p <- ggplot(data = fellows, 
@@ -354,10 +356,35 @@ fellows %>%
        title = "Age Distribution of MacArthur Winners over time")
 ```
 
-# Make and plot some tables
+## Affiliation, Title, Area, and Location
 
-```{r affiliation, fig.height=12, fig.width=10}
+```{r dotplot}
 
+## A convenience function to make the same kind of dotplot repeatedly
+mac_dotplot <- function(data, xvar = pct, yvar = n_lab, 
+      x = NULL, y = NULL, title = NULL, 
+      subtitle = NULL, 
+      caption = "Kieran Healy @kjhealy / Data: MacArthur Foundation.") {
+  ggplot(data = data, 
+         mapping = aes(x = {{ xvar }},
+                       y = reorder({{ yvar }}, {{ xvar }}))) + 
+    geom_point(size = 3) + 
+    labs(x = x, 
+         y = y, 
+         title = title,
+         subtitle = subtitle,
+         caption = caption) +
+     theme(axis.text = element_text(size = rel(1.25)),
+        axis.title = element_text(size = rel(1.25)), 
+        plot.title = element_text(size = rel(1.75)),
+        plot.caption = element_text(size = rel(1.1)))  
+}
+
+```
+
+### Affiliation
+
+```{r affil-all, fig.height=12, fig.width=10}
 fellows %>% 
   group_by(affil_short) %>%
   tally() %>%
@@ -367,19 +394,29 @@ fellows %>%
   arrange(desc(pct)) %>% 
   filter(n > 2) %>%
   select(affil_short, n_lab, pct) %>%
-  ggplot(mapping = aes(x = pct, y = reorder(n_lab, pct))) + 
-  geom_point(size = 3) + 
-  labs(x = "Percent of All Awards", 
-       y = NULL, 
-       title = "MacArthur Fellowships by Affiliation, 1981-2019", 
-       subtitle = "Institutions with three or more affiliated fellows",
-      caption = "Kieran Healy @kjhealy socviz.co / Data: MacArthur Foundation.") +
-  theme(axis.text = element_text(size = rel(1.25)),
-        axis.title = element_text(size = rel(1.25)), 
-        plot.title = element_text(size = rel(1.75)),
-        plot.caption = element_text(size = rel(1.1)))  
+  mac_dotplot(x = "Percent of All Awards", 
+              title = "MacArthur Fellowships by Affiliation, 1981-2019", 
+              subtitle = "Institutions with three or more affiliated fellows") 
 ```
 
+```{r affil-nona, fig.height=12, fig.width=10}
+fellows %>% 
+  group_by(affil_short) %>%
+  tally() %>%
+  mutate(freq = n / sum(n),
+         pct = round((freq*100), 1),
+         n_lab = paste0(affil_short," (", n, ")")) %>%
+  filter(affil_short %nin% "None Provided") %>%
+  arrange(desc(pct)) %>% 
+  filter(n > 2) %>%
+  select(affil_short, n_lab, pct) %>%
+  mac_dotplot(x = "Percent of All Awards", 
+              title = "MacArthur Fellowships by Affiliation, 1981-2019", 
+              subtitle = "Institutions with three or more affiliated fellows. Excludes 'No Affiliation.'") 
+```
+
+
+### Title
 
 ```{r titles, fig.height=12, fig.width=10}
 fellows %>% 
@@ -391,19 +428,28 @@ fellows %>%
   arrange(desc(pct)) %>% 
   filter(n > 2) %>%
   select(n_lab, pct) %>%
-  ggplot(mapping = aes(x = pct, y = reorder(n_lab, pct))) + 
-  geom_point(size = 3) + 
-  labs(x = "Percent of All Awards", 
-       y = NULL, 
+  mac_dotplot(x = "Percent of All Awards", 
        title = "MacArthur Fellowships by Title, 1981-2019", 
-       subtitle = "Titles mentioned three or more times",
-      caption = "Kieran Healy @kjhealy socviz.co / Data: MacArthur Foundation.") +
-  theme(axis.text = element_text(size = rel(1.25)),
-        axis.title = element_text(size = rel(1.25)), 
-        plot.title = element_text(size = rel(1.75)),
-        plot.caption = element_text(size = rel(1.1)))  
-
+       subtitle = "Titles mentioned three or more times")
 ```
+
+```{r titles-nona, fig.height=12, fig.width=10}
+fellows %>% 
+  group_by(title_short) %>%
+  tally() %>%
+  mutate(freq = n / sum(n),
+         pct = round((freq*100), 1),
+         n_lab = paste0(title_short," (", n, ")")) %>%
+  filter(title_short %nin% "None Provided") %>%
+  arrange(desc(pct)) %>% 
+  filter(n > 2) %>%
+  select(n_lab, pct) %>%
+  mac_dotplot(x = "Percent of All Awards", 
+       title = "MacArthur Fellowships by Title, 1981-2019", 
+       subtitle = "Titles mentioned three or more times. Excludes 'No Title.'")
+```
+
+### Area
 
 ```{r areas, fig.height=12, fig.width=10}
 fellows %>% 
@@ -415,18 +461,12 @@ fellows %>%
   arrange(desc(pct)) %>% 
   filter(pct >=1) %>%
   select(n_lab, pct) %>%
-  ggplot(mapping = aes(x = pct, y = reorder(n_lab, pct))) + 
-  geom_point(size = 3) + 
-  labs(x = "Percent of All Awards", 
-       y = NULL, 
-       title = "MacArthur Fellowships by Area, 1981-2019", 
-       subtitle = "Areas with one percent or more of all awards",
-      caption = "Kieran Healy @kjhealy socviz.co / Data: MacArthur Foundation.") +
-  theme(axis.text = element_text(size = rel(1.25)),
-        axis.title = element_text(size = rel(1.25)), 
-        plot.title = element_text(size = rel(1.75)),
-        plot.caption = element_text(size = rel(1.1)))  
+  mac_dotplot(x = "Percent of All Awards", 
+              title = "MacArthur Fellowships by Area, 1981-2019", 
+              subtitle = "Areas with one percent or more of all awards")
 ```
+
+### Locations
 
 ```{r locations, fig.height=12, fig.width=10}
 
@@ -444,8 +484,7 @@ fellows %>%
   labs(x = "Percent of All Awards", 
        y = NULL, 
        title = "MacArthur Fellowships by Location, 1981-2019", 
-       subtitle = "Locations with one percent or more of all awards",
-      caption = "Kieran Healy @kjhealy socviz.co / Data: MacArthur Foundation.") +
+       subtitle = "Locations with one percent or more of all awards") +
   theme(axis.text = element_text(size = rel(1.25)),
         axis.title = element_text(size = rel(1.25)), 
         plot.title = element_text(size = rel(1.75)),
