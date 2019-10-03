@@ -9,10 +9,14 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r}
+```{r libraries}
 library(tidyverse)
 library(rvest)
 library(socviz)
+library(ggrepel)
+```
+
+```{r theme}
 library(showtext)
 showtext_auto()
 library(myriad)
@@ -21,503 +25,227 @@ import_myriad_semi()
 theme_set(theme_myriad_semi())
 ```
 
-# Get a List of all MacArthur Fellows 
+# Get a List of all MacArthur Fellows from `macfound.org` and put them in a list. Don't do this more than once! 
 
-```{r}
-url <- "https://en.wikipedia.org/wiki/MacArthur_Fellows_Program"
-page <- read_html(url) 
-content <- html_node(page, "#mw-content-text")
-years <- html_nodes(content, "h3")
-winners <- html_nodes(page, ".column-width")
-```
+```{r, eval = FALSE, echo = TRUE}
 
-```{r}
-gen_links <- function(webpage){
-    # Extract the url and put the prefix back
-    url_ <- webpage %>%
-        rvest::html_nodes(".column-width a") %>% 
-        rvest::html_attr("href") %>%
-        paste0("https://en.wikipedia.org", .)
-    # Extract the link text
-    link_ <- webpage %>%
-        rvest::html_nodes(".column-width a") %>%
-        rvest::html_text() 
-    tibble(name = link_, url = url_)
-}
+## Generate vector of fellow page urls
+urls <- paste0("https://www.macfound.org/fellows/", 1:1054, "/")
 
-out <- gen_links(content) 
 
-## 2018 and 2019 fn increments are missing
-dummy_row <- c("[99]", "https")
-
-## Row index of first 2019 fellow
-ind <- which(out$name == "Elizabeth S. Anderson")
-
-out <- rbind(out[1:ind-1,], dummy_row, out[ind:nrow(out),])
-
-## Additional cites that are superfluous for year names
-kill_rows <- c("[8]", "[11]", "[13]", "[14]", "[19]",
-               "[47]", "[48]", "[49]", "[50]")
-
-## Delete the superfluous rows, and then create a cumulating counter
-## that tracks the award year.
-out <- out %>%
-  filter(name %nin% kill_rows) %>%
-  mutate(year = cumsum(str_detect(name, "\\[\\d{1,2}\\]")) + 1981) %>%
-  filter(!str_detect(name, "\\[\\d{1,2}\\]"))
-
-data <- out
-
-```
-
-# Grab all their Wikipedia pages and put them in a list
-
-Don't do this more than once! 
-
-```{r, eval = FALSE}
-
-## Grab the full Wikipedia page of every awardee. 
-## Not every awardee has a page, hence safely()
-bio_pages <- data$url[1:5] %>% 
+## Grab the full Macfound page of every awardee from macfound.org
+bio_pages <- urls %>% 
   map(~ {
     message(glue::glue("* parsing: {.x}"))
     Sys.sleep(5) # try to be polite
     safely(read_html)(.x)
   })
 
-## Name the list elements
-bio_pages <- set_names(bio_pages, data$name)
 ```
 
-There's a gotcha with objects like `bio_pages`: they are _serialized_, which means more or less that they contain pointers to data stored live in memory (in this case the HTML files for each awardee). The catch is that serialized objects cannot be saved to disk in a way that preserves their contents. Normally we can `save()` data objects and `load()` them later, but XML/rvest objects can't be written straight to disk. So instead, we'll grab each page and save it individually. Then if we want to rerun this analysis without crawling all the pages again, we will load them in from our local saves.
+# Save the scraped webpages
 
-```{r}
-## Get clean file names
-fnames <-paste0("raw/", janitor::make_clean_names(data$name),".html") 
-names(fnames) <- data$name   
+There's a gotcha with objects like `bio_pages`: they cannot be straightforwardly saved to R's native data format with `save()`. The XML files are stored with external pointers to their content and cannot be "serialized" in a way that saves their content properly. If you try, when you `load()` the saved object you will get complaints about missing pointers. So instead, we'll unspool our list and  save each fellow's page individually. Then if we want to rerun this analysis without crawling everything again, we will load them in from our local saved versions using `read_html()`.
 
-## Get every webpage, dropping the safely() error codes
-page_list <- pluck(bio_pages, "result") 
+```{r localsave}
 
-## Get a vector of null names -- i.e. awardees who have no wikipedia page
-null_names <- keep(page_list, is.null)
+## Get a list containing every fellow's webpage, 
+## Drop the safely() error codes from the initial scrape, and 
+## and also drop any NULL entries
+page_list <- pluck(bio_pages, "result") %>% 
+  compact()
 
-## Drop the empty entries from the list of pages to save
-page_list <- compact(page_list)
+## Make a vector of clean file names of the form "raw/macfound.org/jane_doe.html"
+## One for every fellow. Same order as the page_list.
+fnames <-paste0("raw/macfound.org/", 
+                janitor::make_clean_names(fellows$name),
+                ".html") 
+names(fnames) <- fellows$name   
 
-## Remove null names from our list of filenames to save
-ind <- names(fnames) %nin% names(null_names)
-fnames <- fnames[ind]
-
-## Walk the page_list, saving each HTML file with its respective clean file name
+## Walk the elements of the page list and the file names to 
+## save each HTML file under is respective clean file name
 walk2(page_list, fnames, ~ write_xml(.x, file = .y))
+
 ```
 
-# Parse the pages, searching for birth years
+# Use the local version from now on
 
-Two main options: look for dates in the main text (a pain; and error prone); extract `bday` element from the `vcard` (accurate, but mostly missing). Here are functions to do each of these.
+```{r localparse}
 
-```{r}
+## The filenames we just created
+local_urls <- fs::dir_ls("raw/macfound.org/")
 
-## Born 1950 / born 1950
-wiki_born <- "[Bb]orn\\s+\\d{4}"
-
-## January 10, 1950
-us_date <- "(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\\s+(\\d{1,2}),\\s+(\\d{4})"
-
-## 10 January 1950
-uk_date <- "(\\d{1,2})\\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\\s+(\\d{4})"
-
-## Each of the above
-full_reg <- paste0("(", wiki_born, ")|(", us_date, ")|(", uk_date, ")")
-
-body_age_string <- function(x, reg = full_reg) {
-    ifelse(is.null(x), return(NA), FALSE)
-    out <- rvest::html_node(x, "#mw-content-text") %>%
-            rvest::html_text() %>%
-            str_remove("in \\d{4}") %>%
-            str_extract(reg) %>%
-            str_extract("\\d{4}") %>%
-            as.integer()
-    
-    ifelse(identical(out, character(0)), NA, out)
-}
-
-bday_age_string <- function(x) {
-    ifelse(is.null(x), return(NA), FALSE)
-      
-    out <- rvest:::html_nodes(x, ".bday") %>%
-      rvest::html_text() %>%
-       str_extract("\\d{4}") %>%
-       as.integer()
-    ifelse(identical(out, character(0)), NA, out)
-}
+## Grab the full Macfound page of every awardee. 
+bio_pages <- local_urls %>% 
+  map(~ {
+    safely(read_html)(.x)
+  })
 
 
 ```
 
+# Parse the pages 
+
 ```{r}
+get_fellow <- function(x) {
+    ifelse(is.null(x), return(NA), FALSE)
   
-body_out <- bio_pages %>% 
-  map("result") %>%
-  map_int(body_age_string)
+    f_name <- rvest::html_node(x, ".has-top-margin") %>%
+          rvest::html_text(trim = TRUE)
+      
+    f_year <- rvest::html_node(x, "h2") %>%
+          rvest::html_text(trim = TRUE) %>%
+          stringr::str_extract("Class of( January| February| March| April| May| June| July| August| September| October| November| December)?\\s+\\d{4}") %>%
+          stringr::str_extract("\\d{4}")
+  
+    out <- rvest::html_node(x, ".photo-bio__content") %>%
+          rvest::html_text(trim = TRUE) %>%
+          stringr::str_remove_all("\n              ")
+        
+    f_title <- str_trim(str_match(out, "Title (.*?) Affiliation")[,2])
+    f_affil <- str_trim(str_match(out, "Affiliation (.*?) Location")[,2])
+    f_loc <- str_trim(str_match(out, "Location (.*?) Age")[,2])
+    f_age <- str_trim(str_extract(out, "Age(.*?)\\d{2}")) %>% str_extract("\\d{2}")
+    f_area <- str_trim(str_match(out, "Area of Focus (.*?)$")[,2])
 
-body_out
-
-bday_out <- bio_pages %>% 
-  map("result") %>%
-  map_int(bday_age_string)
-
-bday_out
-
-```
-
-# Bind the ages in to the data.
-
-```{r}
-
-data <- out
-
-data <- data %>% add_column(body_out)
-data <- data %>% add_column(bday_out)
-
-data$born <- data$bday_out
-ind <- is.na(data$born)
-
-data$born[ind] <- data$body_out[ind]
-
-```
-
-# Clean Errors and Problem Cases
-
-E.g., 
-
-```{r}
-range(data$born, na.rm = TRUE)
-
-data %>% filter(born == 1675)
-
-data %>% filter(name == "Mark S. Wrighton")
-
-```
-
-Or,
-
-```{r}
-bad_cases <- data %>% filter(age < 20) 
-
-bad_cases
-```
-
-```{r}
-
-## Ad Hoc birth year fixes go here.
-data <- data %>%
-  mutate(born_rc = case_when(
-    name == "Mark S. Wrighton" ~ as.integer(1949), 
-                             name == "Wampanoag" ~ NA_integer_,
-                             TRUE ~ born))
-
-data %>% filter(year == 2018, is.na(age)) %>% select(name)
-
-data <- data %>% 
-  mutate(age = year - born_rc, 
-         age = replace(age, age < 20, NA)) 
-
-## General ad hoc fixes
-data <- data %>%
-  filter(name %nin% c("elder rights", "Alutiiq", "Benetech"))
-## Problem parsing at Marie-Therese Connolly (Elder Rights is her job but it ended up as a name)
-
-## Ad Hoc age fixes go here.
-## Do it by award year for clarity, I guess
-## These age-at-award values were taken directly from macfound.org
-
-## 2019 class
-## data %>% filter(year == 2019, is.na(age)) %>% select(name)
-data <- data %>%
-  mutate(age = case_when(
-    name == "Sujatha Baliga" ~ as.integer(48), 
-    name == "Danielle Citron" ~ as.integer(50), 
-    name == "Lisa Daugaard" ~ as.integer(53),    
-    name == "Lisa Daugaard" ~ as.integer(53),    
-    name == "Annie Dorsen" ~ as.integer(45),
-    name == "Andrea Dutton" ~ as.integer(46),
-    name == "Mary Halvorson" ~ as.integer(38),
-    name == "Sadiya Hartman" ~ as.integer(58),
-    name == "Stacy Jupiter" ~ as.integer(43),
-    name == "Zachary Lippman" ~ as.integer(41),    
-    name == "Kelly Lytle Hernandez" ~ as.integer(45),
-    name == "Jeffrey Alan Miller" ~ as.integer(35),
-    name == "Jerry X. Mitrovica" ~ as.integer(58),
-    name == "Emmanual Pratt" ~ as.integer(42),
-    name == "Cameron Rowland" ~ as.integer(39),
-    name == "Vanessa Ruta" ~ as.integer(45),
-    name == "Joshua Tenenbaum" ~ as.integer(47),    
-    name == "Jenny Tung" ~ as.integer(37),
-    TRUE ~ as.integer(age)))
-
-## 2018 class 
-## data %>% filter(year == 2018, is.na(age)) %>% select(name)
-data <- data %>%
-  mutate(age = case_when(
-  name == "Clifford Brangwynne" ~ as.integer(40),
-  name == "Natalie Diaz" ~ as.integer(40),
-  name == "Livia S. Eberlin" ~ as.integer(32),
-  name == "Gregg Gonsalves" ~ as.integer(54),
-  name == "Becca Heller" ~ as.integer(36),
-  name == "Raj Jayadev" ~ as.integer(43),
-  name == "Titus Kaphar" ~ as.integer(42),
-  name == "Kristina Olson" ~ as.integer(37),
-  name == "Lisa Parks" ~ as.integer(51),
-  name == "Rebecca Sandefur" ~ as.integer(47),
-  name == "Allan Sly" ~ as.integer(36),
-  name == "Sarah T. Stewart-Mukhopadhyay" ~ as.integer(45),
-  name == "Doris Tsao" ~ as.integer(42),
-  name == "Ken Ward Jr" ~ as.integer(50),  
-  TRUE ~ as.integer(age)))
-
-
-## 2017 class 
-## data %>% filter(year == 2017, is.na(age)) %>% select(name)
-data <- data %>%
-  mutate(age = case_when(
-  name == "Sunil Amrith" ~ as.integer(38),
-  name == "Greg Asbed" ~ as.integer(54),
-  name == "Jason De León" ~ as.integer(40),
-  name == "Rami Nashashibi" ~ as.integer(45),
-  name == "Kate Orff" ~ as.integer(45),
-  name == "Betsy Levy Paluck" ~ as.integer(39),
-  name == "Yuval Sharon" ~ as.integer(37),
-  name == "Gabriel Victora  " ~ as.integer(40),
-  TRUE ~ as.integer(age)))
-
-
-## data %>% filter(year == 2016, is.na(age)) %>% select(name)
-data <- data %>%
-  mutate(age = case_when(
-    name == "Ahilan Arulanantham" ~ as.integer(43),
-    name == "Daryl Baldwin" ~ as.integer(53),
-    name == "Anne Basting" ~ as.integer(51),
-    name == "Josh Kun" ~ as.integer(45),
-    name == "Dianne Newman" ~ as.integer(44),
-    name == "Victoria Orphan" ~ as.integer(44),
-    name == "Manu Prakash" ~ as.integer(36),
-    name == "José A. Quiñonez" ~ as.integer(45),
-    name == "Lauren Redniss" ~ as.integer(42),
-    name == "Sarah Stillman" ~ as.integer(32),
-    name == "Bill Thies" ~ as.integer(38),
-    name == "Jin-Quan Yu" ~ as.integer(50),
-    TRUE ~ as.integer(age)))
+    f_bio <- rvest::html_node(x, ":nth-child(3) .text-content--small") %>%
+            rvest::html_text()     
     
-## data %>% filter(year == 2015, is.na(age)) %>% select(name)    
-## Weird: who and where is Lee Curle?
-
-data <- data %>%
-  mutate(age = case_when(
-  name == "Kartik Chandran" ~ as.integer(41),
-  name == "Gary Cohen" ~ as.integer(59),
-  name == "Matthew Desmond" ~ as.integer(35),
-  name == "John Novembre" ~ as.integer(37),
-  name == "Christopher Ré" ~ as.integer(36),
-  name == "Marina Rustow" ~ as.integer(46),
-  name == "Juan Salgado" ~ as.integer(46),
-  name == "Alex Truesdell" ~ as.integer(59),
-  name == "Basil Twist" ~ as.integer(46),
-  TRUE ~ as.integer(age)))
-
-## data %>% filter(year == 2014, is.na(age)) %>% select(name)    
-
-data <- data %>%
-  mutate(age = case_when(
-  name == "Danielle Bassett" ~ as.integer(32),
-  name == "Craig Gentry" ~ as.integer(41),
-  name == "John Henneberger" ~ as.integer(59),
-  name == "Jonathan Rapping" ~ as.integer(48),
-  TRUE ~ as.integer(age)))
-
-## data %>% filter(year == 2013, is.na(age)) %>% select(name)    
-## No data for Nirenberg
-
-data <- data %>%
-  mutate(age = case_when(
-  name == "C. Kevin Boyce" ~ as.integer(39),
-  name == "Jeffrey Brenner" ~ as.integer(44),
-  name == "Craig Fennie" ~ as.integer(40),
-  name == "Robin Fleming" ~ as.integer(57),
-  name == "Carl Haber" ~ as.integer(54),
-  name == "David Lobell" ~ as.integer(34),
-  name == "Ana Maria Rey" ~ as.integer(36),
-  TRUE ~ as.integer(age)))
-
-## data %>% filter(year == 2012, is.na(age)) %>% select(name)    
-
-data <- data %>%
-  mutate(age = case_when(
-  name == "Natalia Almada" ~ as.integer(37),
-  name == "Elissa Hallem" ~ as.integer(34),
-  name == "Maurice Lim Miller" ~ as.integer(66),
-  name == "Dylan C. Penningroth" ~ as.integer(41),
-  name == "Nancy Rabalais" ~ as.integer(62),
-  name == "Melody Swartz" ~ as.integer(43),
-  name == "Benjamin Warf" ~ as.integer(54),  
-  TRUE ~ as.integer(age)))
-
-
-## data %>% filter(year == 2011, is.na(age)) %>% select(name)    
-data <- data %>%
-  mutate(age = case_when(
-  name == "Marie-Therese Connolly" ~ as.integer(54),
-  name == "Tiya Miles" ~ as.integer(41),
-  name == "Matthew Nock" ~ as.integer(38),
-  TRUE ~ as.integer(age)))
-
-## data %>% filter(year == 2010, is.na(age)) %>% select(name)    
-data <- data %>%
-  mutate(age = case_when(
-  name == "Kelly Benoit-Bird" ~ as.integer(34),
-  name == "Carlos D. Bustamante" ~ as.integer(35),
-  name == "Shannon Lee Dawdy" ~ as.integer(43),
-  name == "Nergis Mavalvala" ~ as.integer(42),
-  name == "Sebastian Ruth" ~ as.integer(35),
-  name == "Dawn Song" ~ as.integer(35),
-  name == "Elizabeth Turk" ~ as.integer(48),
-  TRUE ~ as.integer(age)))
-
-## data %>% filter(year == 2009, is.na(age)) %>% select(name)    
-data <- data %>%
-  mutate(age = case_when(
-  name == "Timothy Barrett" ~ as.integer(59),
-  name == "Lin He" ~ as.integer(35),
-  name == "James Longley" ~ as.integer(37),
-  name == "L. Mahadevan" ~ as.integer(44),
-  name == "Elyn Saks" ~ as.integer(53),
-  name == "Jill Seaman" ~ as.integer(57),
-  name == "Daniel Sigman" ~ as.integer(40),
-  name == "Mary Tinetti" ~ as.integer(58),
-  name == "Theodore Zoli" ~ as.integer(43),
-  TRUE ~ as.integer(age)))
-
-
-## data %>% filter(year == 2008, is.na(age)) %>% select(name)    
-data <- data %>%
-  mutate(age = case_when(
-  name == "Kirsten Bomblies" ~ as.integer(34),
-  name == "Susan Mango" ~ as.integer(47),
-  name == "David R. Montgomery" ~ as.integer(46),
-  name == "Sally Temple" ~ as.integer(49),
-  name == "Rachel Wilson" ~ as.integer(34),
-  TRUE ~ as.integer(age)))
-
-
-## data %>% filter(year == 2007, is.na(age)) %>% select(name)    
-data <- data %>%
-  mutate(age = case_when(
-  name == "Peter Cole" ~ as.integer(50),
-  name == "Marc Edwards" ~ as.integer(43),
-  name == "Michael Elowitz" ~ as.integer(37),
-  name == "Cheryl Hayashi" ~ as.integer(40),
-  name == "Yoky Matsuoka" ~ as.integer(36),
-  name == "Paul Rothemund" ~ as.integer(35),
-  name == "Shen Wei" ~ as.integer(39),
-  TRUE ~ as.integer(age)))
-
-
-## data %>% filter(year == 2006, is.na(age)) %>% select(name)    
-data <- data %>%
-  mutate(age = case_when(
-  name == "Lisa Curran" ~ as.integer(45),
-  name == "Victoria Hale" ~ as.integer(45),
-  name == "Adrian Nicole LeBlanc" ~ as.integer(42),
-  name == "D. Holmes Morton" ~ as.integer(55),
-  name == "John A. Rich" ~ as.integer(47),
-  name == "Matias Zaldarriaga" ~ as.integer(35),
-  TRUE ~ as.integer(age)))
-
-
-## data %>% filter(year == 2005, is.na(age)) %>% select(name)    
-data <- data %>%
-  mutate(age = case_when(
-  name == "Edet Belzberg" ~ as.integer(35),
-  name == "Lu Chen" ~ as.integer(33),
-  name == "Michael Cohen" ~ as.integer(61),
-  name == "Joseph Curtin" ~ as.integer(52),
-  name == "Claire Gmachl" ~ as.integer(38),
-  name == "Michael Manga" ~ as.integer(37),
-  TRUE ~ as.integer(age)))
-
-
-## data %>% filter(year == 2004, is.na(age)) %>% select(name)    
-data <- data %>%
-  mutate(age = case_when(
-  name == "Angela Belcher" ~ as.integer(37),
-  name == "Gretchen Berland" ~ as.integer(40),
-  name == "Joseph DeRisi" ~ as.integer(35),
-  name == "Katherine Gottlieb" ~ as.integer(52),
-  name == "John Kamm" ~ as.integer(53),
-  name == "Naomi Leonard" ~ as.integer(40),
-  name == "Vamsi Mootha" ~ as.integer(33),
-  name == "Cheryl Rogowski" ~ as.integer(43),
-  TRUE ~ as.integer(age)))
-
-## data %>% filter(year == 2003, is.na(age)) %>% select(name)    
-data <- data %>%
-  mutate(age = case_when(
-  name == "Sarah H. Kagan" ~ as.integer(41),
-  name == "Ned Kahn" ~ as.integer(43),
-  name == "Nawal M. Nour" ~ as.integer(37),
-  name == "Amy Rosenzweig" ~ as.integer(36),
-  name == "Eve Troutt Powell" ~ as.integer(42),
-  TRUE ~ as.integer(age)))
-
-
-## data %>% filter(year == 2002, is.na(age)) %>% select(name)    
-data <- data %>%
-  mutate(age = case_when(
-    name == "David B. Goldstein" ~ as.integer(51),
-    name == "Janine Jagger" ~ as.integer(52),
-    name == "Daniel Jurafsky" ~ as.integer(39),
-    name == "Erik Mueggler" ~ as.integer(40),
-    name == "Sendhil Mullainathan" ~ as.integer(29),
-    name == "Lee Ann Newsom" ~ as.integer(45),
-    name == "Daniela L. Rus" ~ as.integer(39),
-    name == "Brian Tucker" ~ as.integer(56),
-    name == "Paul Wennberg" ~ as.integer(40),
-  TRUE ~ as.integer(age)))
-
-
-## data %>% filter(year == 2001, is.na(age)) %>% select(name)    
-data <- data %>%
-  mutate(age = case_when(
-  name == "Christopher Chyba" ~ as.integer(41),
-  name == "Brooks Pate" ~ as.integer(36),
-  name == "Julie Su" ~ as.integer(32),
-  name == "David Wilson" ~ as.integer(55),
-  TRUE ~ as.integer(age)))
-
-
-## data %>% filter(year == 2000, is.na(age)) %>% select(name)    
-data <- data %>%
-  mutate(age = case_when(
-  name == "Susan E. Alcock" ~ as.integer(39),
-  name == "K. Christopher Beard" ~ as.integer(38),
-  name == "Lucy Blake" ~ as.integer(42),
-  name == "Laura Otis" ~ as.integer(39),
-  name == "Susan E. Sygall" ~ as.integer(47),
-  name == "Gina G. Turrigiano" ~ as.integer(37),
-  TRUE ~ as.integer(age)))
-
+    record <- tibble(
+      name = f_name,
+      year = f_year,
+      title = f_title,
+      affiliation = f_affil,
+      location = f_loc,
+      age = f_age,
+      area = f_area,
+      bio = f_bio)
+    
+    record
+  }
 
 ```
+
+```{r}
+
+fellows <-  bio_pages %>% 
+  pluck("result") %>% # Get the webpages
+  compact() %>% # Drop any empties
+  map(get_fellow) %>% # Generate the individual records
+  bind_rows() # and combine
+
+```
+
+# A bit more cleaning
+
+```{r}
+
+infer_gender <- function(bio){
+  m_test <- str_detect(bio, "(\\b[Hh]e is)|(\\b[Hh]e was)|\\b[H]is\\b|\\b([Hh]e joined)|(\\b[Hh]e has)|\\b[Hh]e explore|\\b[Hh]e also|\\b[Hh]e produced|\\b[Hh]e founded|\\b[Hh]e worked|\\b[Hh]is work|\\b[Hh]is research")
+  f_test <- str_detect(bio, "(\\b[Ss]he is)|(\\b[Ss]he was)|\\b[H]er\\b|\\b([Ss]he joined)|(\\b[Ss]he has)|\\b[Ss]he explore|\\b[Ss]he also|\\b[Ss]he produced|\\b[Ss]he founded|\\b[Ss]he worked|\\b[Hh]er work|\\b[Hh]er research")
+  
+  out <- case_when(
+    m_test == TRUE & f_test == FALSE ~ "Male", 
+    m_test == FALSE & f_test == TRUE ~ "Female",
+    TRUE ~ NA_character_
+    )
+  out
+}
+
+fellows <- fellows %>%
+  mutate(age = as.integer(age),
+         year = int_to_year(as.integer(year)),
+         sex = infer_gender(bio)) %>%
+  select(name, year, age, sex, title, everything())
+
+## Eiko and Koma Otake
+koma <- fellows %>% filter(name == "Eiko and Koma Otake")
+koma$name <- "Koma Otake"
+
+eiko <- fellows %>% filter(name == "Eiko and Koma Otake")
+eiko$name <- "Eiko Otake"
+
+fellows <- fellows %>% filter(name %nin% "Eiko and Koma Otake")
+fellows <- rbind(fellows, eiko, koma)
+
+## Manually code the remaining gender vals
+fellows %>% filter(is.na(sex)) %>% select(name) %>% data.frame()
+
+fellows <- fellows %>%
+  mutate(sex = case_when(
+  name == "Lin He" ~ as.character("Female"),
+  name == "Aaron Shirley" ~ as.character("Male"),
+  name == "Michael Lerner" ~ as.character("Male"),
+  name == "Edward V. Roberts" ~ as.character("Male"),
+  name == "Aaron Lansky" ~ as.character("Male"),
+  name == "Patricia Locke" ~ as.character("Female"),
+  name == "Robert H. McCabe" ~ as.character("Male"),
+  name == "Jeraldyne Blunden" ~ as.character("Female"),
+  name == "Martin Daniel Eakes" ~ as.character("Male"),
+  name == "Louis Massiah" ~ as.character("Male"),
+  name == "Eiko Otake" ~ as.character("Female"),
+  name == "Koma Otake" ~ as.character("Male"),
+  name == "Kun-Liang Guan" ~ as.character("Male"),
+  name == "William W. McDonald" ~ as.character("Male"),
+  name == "Juan Martin Maldacena" ~ as.character("Male"),
+  name == "Ken Vandermark" ~ as.character("Male"),
+  name == "Lucy Blake" ~ as.character("Female"),
+  name == "Katherine Gottlieb" ~ as.character("Female"),
+  name == "Nancy Siraisi" ~ as.character("Female"),
+  name == "Whitfield Lovell" ~ as.character("Male"),
+  name == "Junot Díaz" ~ as.character("Male"),
+  name == "Jeffrey Brenner" ~ as.character("Male"),
+  name == "Michelle Dorrance" ~ as.character("Female"),
+  name == "Nicole Eisenman" ~ as.character("Female"),
+  name == "LaToya Ruby Frazier" ~ as.character("Female"),
+  name == "Taylor Mac" ~ as.character("Male"),
+  #name == "Wu Tsang" ~ as.character(), ## one nonbinary case
+  name == "Cameron Rowland" ~ as.character("Male"),
+  TRUE ~ sex))
+
+```
+
+# Clean the Area field a little
+
+```{r}
+
+clean_area <- function(x) {
+  stringr::str_remove(x, "(Website|Twitter).*$") %>%
+  stringr::str_squish()
+}
+
+fellows <- fellows %>%
+  mutate(area = clean_area(area))
+
+```
+
+# Clean Affiliation and Title
+
+```{r}
+fellows <- fellows %>%
+  mutate(affiliation = replace_na(affiliation, "None Provided"), 
+         title = replace_na(title, "None Provided"),
+         area = replace_na(area, "None Provided"),
+         affil_short = str_trim(str_remove_all(affiliation, "(School of.*?,)|(College of.*?,)|(Division of.*?,)|(Department of.*?,)|(, .*?Department)|(Center.*?,)")), 
+         title_short = str_trim(str_remove_all(title, ",.*$")),
+         area_short = str_trim(str_remove_all(area, ",.*$")))
+
+fellows
+
+```
+
 
 ## Write out the data to a CSV
 
 ```{r}
-write_csv(data, "data/macarthur.csv")
+write_csv(fellows, "data/macarthur-mfd.csv")
 
-## write_csv(data, "~/Documents/courses/visualizingsociety.com/static/data/macarthur.csv")
+## Partital for problem set:
+## fellows %>% select(name, year, age, sex) %>%
+##  write_csv("~/Documents/courses/visualizingsociety.com/static/data/macarthur.csv")
 
 ```
+
 
 
 
@@ -525,14 +253,121 @@ write_csv(data, "data/macarthur.csv")
   
 ```{r}
 
-data %>%
-  ggplot(mapping = aes(x = socviz::int_to_year(year), 
-                       y = age)) + 
-  geom_jitter(alpha = 0.8, shape = 1, position = position_jitter(height = 0.2)) + 
-  geom_smooth() +
+p <- ggplot(data = fellows, 
+              mapping = aes(x = year, y = age, group = year))
+
+p + geom_jitter(alpha = 0.5, shape = 1, position = position_jitter()) +  
+  geom_boxplot(outlier.size = 0, 
+                   fill = my.colors("bly")[2], 
+                   alpha = 0.2) + 
+  theme(legend.position = "top") +
   labs(x = "Year of Award", y = "Age at Time of Award", 
-       title = "Age Distribution of MacArthur Winners", 
-       subtitle = "Incomplete data, please don't share")
+       title = "Age Distribution of MacArthur Award Winners 1981-2019", 
+       caption = "Kieran Healy @kjhealy socviz.co / Data: MacArthur Foundation.") + 
+  scale_x_date(breaks = c(int_to_year(1981), 
+                          int_to_year(1991), 
+                          int_to_year(2001), 
+                          int_to_year(2011), 
+                          int_to_year(2019)), 
+               labels = c("1981", "1991", "2001", "2011", "2019")) + 
+  theme(axis.text = element_text(size = rel(1.25)),
+        axis.title = element_text(size = rel(1.25)), 
+        plot.title = element_text(size = rel(1.75)),
+        plot.caption = element_text(size = rel(1.1)))
+  
+
+p <-   ggplot(data = subset(fellows, !is.na(sex)), 
+              mapping = aes(x = year, y = age, 
+                       color = sex,
+                       fill = sex)) 
+p + geom_jitter(alpha = 0.8, shape = 1, position = position_jitter(height = 0.2)) + 
+  geom_smooth() +
+  theme(legend.position = "top") +
+  labs(x = "Year of Award", y = "Age at Time of Award", 
+       title = "Age Distribution of MacArthur Winners over time")
+
+fellows %>%
+  group_by(sex) %>%
+  tally() %>%
+ mutate(pct = (n / sum(n))*100)
+
+p <-   ggplot(data = subset(fellows, !is.na(sex)), 
+              mapping = aes(x = year, y = age, color = sex, fill = sex)) 
+p +   geom_boxplot(outlier.colour = NA, 
+                   mapping = aes(group = interaction(year, sex), 
+                                 color = sex,
+                                 fill = sex), alpha = 0.3) + 
+  geom_jitter(alpha = 0.4, shape = 1, 
+              position = position_jitter(height = 0.2)) + 
+  theme(legend.position = "top") +
+  scale_fill_manual(values = my.colors("bly")) + 
+  scale_color_manual(values = my.colors("bly")) +
+  labs(x = "Year of Award", y = "Age at Time of Award", 
+       color = "Gender", fill = "Gender",
+       title = "Age Distribution of MacArthur Winners over time")
+
+
+```
+
+
+```{r}
+
+fellows %>% 
+  group_by(affil_short) %>%
+  tally() %>%
+  mutate(freq = n / sum(n),
+         pct = round((freq*100), 1)) %>%
+  arrange(desc(pct)) %>% 
+  filter(n > 2) %>%
+  select(affil_short, n, pct)
+
+
+fellows %>% 
+  group_by(title_short) %>%
+  tally() %>%
+  mutate(freq = n / sum(n),
+         pct = round((freq*100), 1)) %>%
+  arrange(desc(pct)) %>% 
+  filter(n > 2) %>%
+  select(title_short, n, pct)
+
+fellows %>% 
+  group_by(area_short) %>%
+  tally() %>%
+  mutate(freq = n / sum(n),
+         pct = round((freq*100), 1), 
+         n_lab = paste0(area_short," (", n, ")")) %>%
+  arrange(desc(pct)) %>% 
+  filter(pct >=1) %>%
+  select(n_lab, n, pct) %>%
+  ggplot(mapping = aes(x = pct, y = reorder(n_lab, pct))) + 
+  geom_point(size = 3) + 
+  labs(x = "Percent of All Awards", 
+       y = NULL, 
+       title = "MacArthur Fellowships by Area, 1981-2019", 
+       subtitle = "Areas with one percent or more of all awards",
+      caption = "Kieran Healy @kjhealy socviz.co / Data: MacArthur Foundation.") +
+  theme(axis.text = element_text(size = rel(1.25)),
+        axis.title = element_text(size = rel(1.25)), 
+        plot.title = element_text(size = rel(1.75)),
+        plot.caption = element_text(size = rel(1.1)))  
+
+
+fellows %>% 
+  group_by(location) %>%
+  tally() %>%
+  mutate(freq = n / sum(n),
+         pct = round((freq*100), 1)) %>%
+  arrange(desc(pct)) %>% 
+  filter(pct >= 1) %>%
+  select(location, n, pct)
+
+
+
+```
+
+
+```{r}
 
 ```
 
