@@ -1,22 +1,29 @@
 ---
 title: "MacArthur Data"
-author: "Kieran Healy"
+author:
+- name: "Kieran Healy"
+  affiliation: "Duke University"
+  email: "kjhealy@soc.duke.edu"
 date: "9/27/2019"
-output: html_document
+output:
+  pdf_document:
+    template: ~/.pandoc/templates/rmd-latex.template
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, 
+                      fig.showtext=TRUE)
 ```
 
-```{r libraries}
+```{r libraries, echo = FALSE}
 library(tidyverse)
 library(rvest)
 library(socviz)
 library(ggrepel)
 ```
 
-```{r theme}
+```{r theme, echo = FALSE}
 library(showtext)
 showtext_auto()
 library(myriad)
@@ -89,6 +96,11 @@ bio_pages <- local_urls %>%
     safely(read_html)(.x)
   })
 
+## summary first ten
+summary(bio_pages)[1:5,]
+
+## E.g. first record
+bio_pages[[1]]
 
 ```
 
@@ -97,13 +109,14 @@ Next, we parse every webpage to create a record for each fellow. Here's the func
 ```{r}
 get_fellow <- function(x) {
     ifelse(is.null(x), return(NA), FALSE)
-  
+    
     f_name <- rvest::html_node(x, ".has-top-margin") %>%
           rvest::html_text(trim = TRUE)
-      
+
+    year_string <- "Class of( January| February| March| April| May| June| July| August| September| October| November| December)?\\s+\\d{4}"        
     f_year <- rvest::html_node(x, "h2") %>%
           rvest::html_text(trim = TRUE) %>%
-          stringr::str_extract("Class of( January| February| March| April| May| June| July| August| September| October| November| December)?\\s+\\d{4}") %>%
+          stringr::str_extract(year_string) %>%
           stringr::str_extract("\\d{4}")
   
     out <- rvest::html_node(x, ".photo-bio__content") %>%
@@ -113,7 +126,8 @@ get_fellow <- function(x) {
     f_title <- str_trim(str_match(out, "Title (.*?) Affiliation")[,2])
     f_affil <- str_trim(str_match(out, "Affiliation (.*?) Location")[,2])
     f_loc <- str_trim(str_match(out, "Location (.*?) Age")[,2])
-    f_age <- str_trim(str_extract(out, "Age(.*?)\\d{2}")) %>% str_extract("\\d{2}")
+    f_age <- str_trim(str_extract(out, "Age(.*?)\\d{2}")) %>% 
+      str_extract("\\d{2}")
     f_area <- str_trim(str_match(out, "Area of Focus (.*?)$")[,2])
 
     f_bio <- rvest::html_node(x, ":nth-child(3) .text-content--small") %>%
@@ -264,9 +278,9 @@ fellows
 ```{r}
 write_csv(fellows, "data/macarthur-mfd.csv")
 
-## Partital seleciton for class problem set:
+## Partital selection for class problem set:
 ## fellows %>% select(name, year, age, sex) %>%
-##  write_csv("~/Documents/courses/visualizingsociety.com/static/data/macarthur.csv")
+## write_csv("~/Documents/courses/visualizingsociety.com/static/data/macarthur.csv")
 
 ```
 
@@ -275,7 +289,7 @@ write_csv(fellows, "data/macarthur-mfd.csv")
 
 # Make some plots
   
-```{r}
+```{r, fig.width = 12}
 
 p <- ggplot(data = fellows, 
               mapping = aes(x = year, y = age, group = year))
@@ -298,7 +312,9 @@ p + geom_jitter(alpha = 0.5, shape = 1, position = position_jitter()) +
         axis.title = element_text(size = rel(1.25)), 
         plot.title = element_text(size = rel(1.75)),
         plot.caption = element_text(size = rel(1.1)))
-  
+```
+
+```{r, fig.width = 12}
 
 p <-   ggplot(data = subset(fellows, !is.na(sex)), 
               mapping = aes(x = year, y = age, 
@@ -309,15 +325,16 @@ p + geom_jitter(alpha = 0.8, shape = 1, position = position_jitter(height = 0.2)
   theme(legend.position = "top") +
   labs(x = "Year of Award", y = "Age at Time of Award", 
        title = "Age Distribution of MacArthur Winners over time")
-
+```
+```{r, fig.width = 12}
 fellows %>%
   group_by(sex) %>%
   tally() %>%
  mutate(pct = (n / sum(n))*100)
 
-p <-   ggplot(data = subset(fellows, !is.na(sex)), 
+p <- ggplot(data = subset(fellows, !is.na(sex)), 
               mapping = aes(x = year, y = age, color = sex, fill = sex)) 
-p +   geom_boxplot(outlier.colour = NA, 
+p + geom_boxplot(outlier.colour = NA, 
                    mapping = aes(group = interaction(year, sex), 
                                  color = sex,
                                  fill = sex), alpha = 0.3) + 
@@ -355,7 +372,9 @@ fellows %>%
   arrange(desc(pct)) %>% 
   filter(n > 2) %>%
   select(title_short, n, pct)
+```
 
+```{r, fig.height=12, fig.width=10}
 fellows %>% 
   group_by(area_short) %>%
   tally() %>%
@@ -376,7 +395,9 @@ fellows %>%
         axis.title = element_text(size = rel(1.25)), 
         plot.title = element_text(size = rel(1.75)),
         plot.caption = element_text(size = rel(1.1)))  
+```
 
+```{r}
 
 fellows %>% 
   group_by(location) %>%
@@ -390,3 +411,10 @@ fellows %>%
 
 
 ```
+
+# Session Information
+
+```{r}
+sessioninfo::session_info()
+```
+
