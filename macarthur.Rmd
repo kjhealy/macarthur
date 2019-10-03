@@ -115,8 +115,8 @@ get_fellow <- function(x) {
           rvest::html_text(trim = TRUE)
 
     year_regex <- paste0("Class of( January| February| March| April|",
-                          "May| June| July| August| September| October|", 
-                          "November| December)?\\s+\\d{4}")
+                          " May| June| July| August| September| October|", 
+                          " November| December)?\\s+\\d{4}")
     
     f_year <- rvest::html_node(x, "h2") %>%
           rvest::html_text(trim = TRUE) %>%
