@@ -245,7 +245,7 @@ infer_gender <- function(bio){
                     "\\b[Hh]e founded|","\\b[Hh]e also|\\b[Hh]e worked|",
                     "\\b[Hh]is work|\\b[Hh]is research")
   
-  f_regex <- paste0("(\\b[Ss]he is)|(\\b[Ss]he was)|\\b[H]er\\b|",
+  w_regex <- paste0("(\\b[Ss]he is)|(\\b[Ss]he was)|\\b[H]er\\b|",
                     "\\b([Ss]he joined)|(\\b[Ss]he has)|",
                     "\\b[Ss]he explore|\\b[Ss]he also|\\b[Ss]he produced|",
                     "\\b[Ss]he founded|","\\b[Ss]he worked|",
@@ -254,11 +254,11 @@ infer_gender <- function(bio){
   m_test <- str_detect(bio, m_regex)
   
   
-  f_test <- str_detect(bio, f_regex)
+  w_test <- str_detect(bio, w_regex)
   
   out <- case_when(
-    m_test == TRUE & f_test == FALSE ~ "Male", 
-    m_test == FALSE & f_test == TRUE ~ "Female",
+    m_test == TRUE & w_test == FALSE ~ "Men", 
+    m_test == FALSE & w_test == TRUE ~ "Women",
     TRUE ~ NA_character_
     )
   out
@@ -271,8 +271,8 @@ We apply it to our data, also making the (character) records of age and fellowsh
 fellows <- fellows %>%
   mutate(age = as.integer(age),
          year = int_to_year(as.integer(year)),
-         sex = infer_gender(bio)) %>%
-  select(name, year, age, sex, title, everything())
+         gender = infer_gender(bio)) %>%
+  select(name, year, age, gender, title, everything())
 
 fellows
 ```
@@ -281,49 +281,54 @@ fellows
 
 ```{r}
 ### Eiko and Koma Otake
-koma <- fellows %>% filter(name == "Eiko and Koma Otake")
+koma <- fellows %>% 
+  filter(name == "Eiko and Koma Otake")
 koma$name <- "Koma Otake"
 
-eiko <- fellows %>% filter(name == "Eiko and Koma Otake")
+eiko <- fellows %>% 
+  filter(name == "Eiko and Koma Otake")
 eiko$name <- "Eiko Otake"
 
 fellows <- fellows %>% filter(name %nin% "Eiko and Koma Otake")
 fellows <- rbind(fellows, eiko, koma)
 
 ### Manually code the remaining gender vals
-fellows %>% filter(is.na(sex)) %>% select(name) %>% data.frame()
+fellows %>% 
+  filter(is.na(gender)) %>% 
+           select(name) %>% 
+  data.frame()
 
 fellows <- fellows %>%
-  mutate(sex = case_when(
-  name == "Lin He" ~ as.character("Female"),
-  name == "Aaron Shirley" ~ as.character("Male"),
-  name == "Michael Lerner" ~ as.character("Male"),
-  name == "Edward V. Roberts" ~ as.character("Male"),
-  name == "Aaron Lansky" ~ as.character("Male"),
-  name == "Patricia Locke" ~ as.character("Female"),
-  name == "Robert H. McCabe" ~ as.character("Male"),
-  name == "Jeraldyne Blunden" ~ as.character("Female"),
-  name == "Martin Daniel Eakes" ~ as.character("Male"),
-  name == "Louis Massiah" ~ as.character("Male"),
-  name == "Eiko Otake" ~ as.character("Female"),
-  name == "Koma Otake" ~ as.character("Male"),
-  name == "Kun-Liang Guan" ~ as.character("Male"),
-  name == "William W. McDonald" ~ as.character("Male"),
-  name == "Juan Martin Maldacena" ~ as.character("Male"),
-  name == "Ken Vandermark" ~ as.character("Male"),
-  name == "Lucy Blake" ~ as.character("Female"),
-  name == "Katherine Gottlieb" ~ as.character("Female"),
-  name == "Nancy Siraisi" ~ as.character("Female"),
-  name == "Whitfield Lovell" ~ as.character("Male"),
-  name == "Junot Díaz" ~ as.character("Male"),
-  name == "Jeffrey Brenner" ~ as.character("Male"),
-  name == "Michelle Dorrance" ~ as.character("Female"),
-  name == "Nicole Eisenman" ~ as.character("Female"),
-  name == "LaToya Ruby Frazier" ~ as.character("Female"),
-  name == "Taylor Mac" ~ as.character("Male"),
+  mutate(gender = case_when(
+  name == "Lin He" ~ as.character("Women"),
+  name == "Aaron Shirley" ~ as.character("Men"),
+  name == "Michael Lerner" ~ as.character("Men"),
+  name == "Edward V. Roberts" ~ as.character("Men"),
+  name == "Aaron Lansky" ~ as.character("Men"),
+  name == "Patricia Locke" ~ as.character("Women"),
+  name == "Robert H. McCabe" ~ as.character("Men"),
+  name == "Jeraldyne Blunden" ~ as.character("Women"),
+  name == "Martin Daniel Eakes" ~ as.character("Men"),
+  name == "Louis Massiah" ~ as.character("Men"),
+  name == "Eiko Otake" ~ as.character("Women"),
+  name == "Koma Otake" ~ as.character("Men"),
+  name == "Kun-Liang Guan" ~ as.character("Men"),
+  name == "William W. McDonald" ~ as.character("Men"),
+  name == "Juan Martin Maldacena" ~ as.character("Men"),
+  name == "Ken Vandermark" ~ as.character("Men"),
+  name == "Lucy Blake" ~ as.character("Women"),
+  name == "Katherine Gottlieb" ~ as.character("Women"),
+  name == "Nancy Siraisi" ~ as.character("Women"),
+  name == "Whitfield Lovell" ~ as.character("Men"),
+  name == "Junot Díaz" ~ as.character("Men"),
+  name == "Jeffrey Brenner" ~ as.character("Men"),
+  name == "Michelle Dorrance" ~ as.character("Women"),
+  name == "Nicole Eisenman" ~ as.character("Women"),
+  name == "LaToya Ruby Frazier" ~ as.character("Women"),
+  name == "Taylor Mac" ~ as.character("Men"),
   #name == "Wu Tsang" ~ as.character(), ### one nonbinary case
-  name == "Cameron Rowland" ~ as.character("Male"),
-  TRUE ~ sex))
+  name == "Cameron Rowland" ~ as.character("Men"),
+  TRUE ~ gender))
 
 ```
 
@@ -366,11 +371,6 @@ fellows
 
 ```{r}
 write_csv(fellows, "data/macarthur-mfd.csv")
-
-### Partital selection for class problem set:
-### fellows %>% select(name, year, age, sex) %>%
-### write_csv("~/Documents/courses/visualizingsociety.com/static/data/macarthur.csv")
-
 ```
 
 
@@ -405,24 +405,25 @@ p + geom_jitter(alpha = 0.5, shape = 1, position = position_jitter()) +
         plot.caption = element_text(size = rel(1.1)))
 ```
 
-```{r agesex, fig.width = 12, layout="l-screen-inset"}
+```{r agegen, fig.width = 12, layout="l-screen-inset"}
 fellows %>%
-  group_by(sex) %>%
+  group_by(gender) %>%
   tally() %>%
  mutate(pct = (n / sum(n))*100) %>%
-  ggplot(data = subset(fellows, !is.na(sex)), 
-              mapping = aes(x = year, y = age, color = sex, fill = sex))+
+  ggplot(data = subset(fellows, !is.na(gender)), 
+              mapping = aes(x = year, y = age, 
+                            color = gender, fill = gender))+
   geom_boxplot(outlier.colour = NA, 
-                   mapping = aes(group = interaction(year, sex), 
-                                 color = sex,
-                                 fill = sex), alpha = 0.3) + 
+                   mapping = aes(group = interaction(year, gender), 
+                                 color = gender,
+                                 fill = gender), alpha = 0.3) + 
   geom_jitter(alpha = 0.4, shape = 1, 
               position = position_jitter(height = 0.2)) + 
   theme(legend.position = "top") +
   scale_fill_manual(values = my.colors("bly")) + 
   scale_color_manual(values = my.colors("bly")) +
   labs(x = "Year of Award", y = "Age at Time of Award", 
-       color = "Gender", fill = "Gender",
+       color = NULL, fill  = NULL,
        title = "Age Distribution of MacArthur Winners over time")
 ```
 
