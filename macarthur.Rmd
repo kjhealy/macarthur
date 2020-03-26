@@ -1,12 +1,12 @@
 ---
-title: "MacArthur Data"
+title: "Scraping Data: Example"
 author:
 - name: "Kieran Healy"
   affiliation: "Duke University"
   email: "kjhealy@soc.duke.edu"
-date: "9/27/2019"
+date: "March 18, 2020"
 output:
-  html_document: default
+  html_document: distill::distill_article
   pdf_document:
     template: ~/.pandoc/templates/rmd-latex.template
 ---
@@ -33,51 +33,116 @@ import_myriad_semi()
 theme_set(theme_myriad_semi())
 ```
 
-# Initial data scraping and saving to local storage
+# An inital web-scraping example, following Brad Boehmke
 
-## Scrape the Website
+When grabbing data from the web, we ideally like to get it via a clean API, so we know just how to talk to the server providing us with the data, and just how to work with what it sends us. This also has the advantage of working with the server in a way that it (and its owners) expect. Sometimes this is isn't possible, and we end up _scraping_ the website instead. In comparison to interacting with a decent API, scraping is messy, fragile, and generally gross. 
 
-Get a List of all MacArthur Fellows from `macfound.org` and put them in a list. Don't do this more than once! This code is not evaluated when knitting the document, because we only have to do it once.
+Note also that you should in general be _very careful_ when it comes to scraping even modest amounts of data from websites, because R can send requests to servers much faster than you can do manually. If you are rude to servers by repeatedly hammering their pages, you may well get throttled or banned from them. Note that, also, systematically scraping data from a website is often _explicitly forbidden_ by the website's owners. Don't do it blithely, or more often than you have to. 
+
+Scraping elements of a web page means grabbing the source HTML of the page, isolating the pieces you want to get (say, a table), and munging them into a tibble. The basic tidyverse tool in R for this is the `rvest` library. There are a number of tutorials and walkthroughs for using `rvest` and its functions. For example [http://bradleyboehmke.github.io//2015/12/scraping-html-text.html](Brad Boehmke)'s introduction, which we'll follow here for the first part. 
+
+First we're going to look at a webpage from the Bureau of Labor Statistics: [http://www.bls.gov/web/empsit/cesbmart.htm]
+
+We grab its content with `read_html()`:
+
+```{r }
+bls <- read_html("http://www.bls.gov/web/empsit/cesbmart.htm")
+
+bls
+```
+
+That gets us the raw content of the file. Now we need to pick through it and get the table we want. We can reach in and extract html _nodes_ (i.e. structural components of the document) matching various descriptions: 
+
+```{r}
+bls_tabs <- html_nodes(bls, "table")
+
+bls_tabs
+```
+
+There are a bunch of tables on the page. Let's get Table 9, "Net birth-death forecasts by industry supersector, April to December 2019". 
+
+```{r}
+bls_tbl9 <- bls %>%
+  html_nodes("#Table9") %>%
+  html_table(fill = TRUE) 
+  
+bls_tbl9
+```
+
+I told you scraping was gross. We need to get rid of the last three rows of the table, containing a blank line, the cumulative totals, and the footnote row. 
+
+```{r}
+bls_tbl9[[1]][1:14,] ## bls_tbl9 is a list
+```
+
+```{r}
+bls_tbl9 <- bls_tbl9[[1]][1:14,] %>%
+  as_tibble()
+
+bls_tbl9
+```
+
+Now we can clean the column names and tidy dates. We also drop the Cumultative Total column.
+
+```{r}
+bls_tbl9 %>%
+  janitor::clean_names() %>%
+  select(-cumulative_total) %>%
+  pivot_longer(apr:dec, names_to = "month", values_to = "forecast") %>%
+  mutate(month = snakecase::to_title_case(month), 
+         forecast = as.numeric(forecast))
+```
+
+Now we have a table we can work with.
+
+
+# MacArthur Fellows Example
+
+Here's a more involved example. We're going to scrape a lot of pages and extract non-table elements from them.
+
+### Scrape the Website
+
+Get a List of all MacArthur Fellows from `macfound.org` and put them in a list. Don't do this more than once! This code is not evaluated when knitting the document, because we only have to do it once. When doing this yourself ss an excersie, please just choose, say 25 pages at random, with e.g. `sample(1:054, 25)` in place of `1:1054` in the line of code that makes the `urls` vector. 
 
 ```{r, eval = FALSE, echo = TRUE}
 
-## Generate vector of fellow page urls
+### Generate vector of fellow page urls
 urls <- paste0("https://www.macfound.org/fellows/", 1:1054, "/")
 
 
-## Grab the full Macfound page of every awardee from macfound.org
+### Grab the full Macfound page of every awardee from macfound.org
 bio_pages <- urls %>% 
   map(~ {
     message(glue::glue("* parsing: {.x}"))
-    Sys.sleep(5) # try to be polite
+    Sys.sleep(sample(rpois(n = 1, lambda = 8))) # try to be polite
     safely(read_html)(.x)
   })
 
 ```
 
-## Save the scraped webpages locally
+### Save the scraped webpages locally
 
-There's a gotcha with objects like `bio_pages`: they cannot be straightforwardly saved to R's native data format with `save()`. The XML files are stored with external pointers to their content and cannot be "serialized" in a way that saves their content properly. If you try, when you `load()` the saved object you will get complaints about missing pointers. So instead, we'll unspool our list and  save each fellow's page individually. Then if we want to rerun this analysis without crawling everything again, we will load them in from our local saved versions using `read_html()`.
+There's a gotcha with objects like `bio_pages`: they cannot be straightforwardly saved to R's native data format with `save()`. The XML files are stored with external pointers to their content and cannot be "serialized" in a way that saves their content properly. If you try, when you `load()` the saved object you will get complaints about missing pointers. So instead, we'll unspool our list and save each fellow's page individually. Then if we want to rerun this analysis without crawling everything again, we will load them in from our local saved versions using `read_html()`.
 
 Again, this code chunk is shown but not run, as we only do it once. 
 
 ```{r localsave, eval = FALSE, echo = TRUE}
 
-## Get a list containing every fellow's webpage, 
-## Drop the safely() error codes from the initial scrape, and 
-## and also drop any NULL entries
+### Get a list containing every fellow's webpage, 
+### Drop the safely() error codes from the initial scrape, and 
+### and also drop any NULL entries
 page_list <- pluck(bio_pages, "result") %>% 
   compact()
 
-## Make a vector of clean file names of the form "raw/macfound.org/jane_doe.html"
-## One for every fellow. Same order as the page_list.
+### Make a vector of clean file names of the form "raw/macfound.org/jane_doe.html"
+### One for every fellow. Same order as the page_list.
 fnames <-paste0("raw/macfound.org/", 
                 janitor::make_clean_names(fellows$name),
                 ".html") 
 names(fnames) <- fellows$name   
 
-## Walk the elements of the page list and the file names to 
-## save each HTML file under is respective clean file name
+### Walk the elements of the page list and the file names to 
+### save each HTML file under is respective clean file name
 walk2(page_list, fnames, ~ write_xml(.x, file = .y))
 
 ```
@@ -88,19 +153,19 @@ Using the local data we've saved, we read in a list of all the MacArthur Fellow 
 
 ```{r localparse}
 
-## The filenames we just created
+### The filenames we just created
 local_urls <- fs::dir_ls("raw/macfound.org/")
 
-## Grab the full Macfound page of every awardee. 
+### Grab the full Macfound page of every awardee. 
 bio_pages <- local_urls %>% 
   map(~ {
     safely(read_html)(.x)
   })
 
-## quick look at first five items in the list
+### quick look at first five items in the list
 summary(bio_pages)[1:5,]
 
-## Quick look inside the first record
+### Quick look inside the first record
 bio_pages[[1]]
 
 ```
@@ -212,10 +277,10 @@ fellows <- fellows %>%
 fellows
 ```
 
-## Manually recoding records 
+### Manually recoding records 
 
 ```{r}
-## Eiko and Koma Otake
+### Eiko and Koma Otake
 koma <- fellows %>% filter(name == "Eiko and Koma Otake")
 koma$name <- "Koma Otake"
 
@@ -225,7 +290,7 @@ eiko$name <- "Eiko Otake"
 fellows <- fellows %>% filter(name %nin% "Eiko and Koma Otake")
 fellows <- rbind(fellows, eiko, koma)
 
-## Manually code the remaining gender vals
+### Manually code the remaining gender vals
 fellows %>% filter(is.na(sex)) %>% select(name) %>% data.frame()
 
 fellows <- fellows %>%
@@ -256,13 +321,13 @@ fellows <- fellows %>%
   name == "Nicole Eisenman" ~ as.character("Female"),
   name == "LaToya Ruby Frazier" ~ as.character("Female"),
   name == "Taylor Mac" ~ as.character("Male"),
-  #name == "Wu Tsang" ~ as.character(), ## one nonbinary case
+  #name == "Wu Tsang" ~ as.character(), ### one nonbinary case
   name == "Cameron Rowland" ~ as.character("Male"),
   TRUE ~ sex))
 
 ```
 
-## Clean the `area` field a little
+### Clean the `area` field a little
 
 ```{r}
 
@@ -276,14 +341,19 @@ fellows <- fellows %>%
 
 ```
 
-## Clean Affiliation and Title
+### Clean Affiliation and Title
 
 ```{r}
+
+affil_regex <- paste0("(School of.*?,)|(College of.*?,)|",
+                      "(Division of.*?,)|(Department of.*?,)|",
+                      "(, .*?Department)|(Center.*?,)")
+
 fellows <- fellows %>%
   mutate(affiliation = replace_na(affiliation, "None Provided"), 
          title = replace_na(title, "None Provided"),
          area = replace_na(area, "None Provided"),
-         affil_short = str_trim(str_remove_all(affiliation, "(School of.*?,)|(College of.*?,)|(Division of.*?,)|(Department of.*?,)|(, .*?Department)|(Center.*?,)")), 
+         affil_short = str_trim(str_remove_all(affiliation, affil_regex)),
          title_short = str_trim(str_remove_all(title, ",.*$")),
          area_short = str_trim(str_remove_all(area, ",.*$")))
 
@@ -292,14 +362,14 @@ fellows
 ```
 
 
-## Write out the cleaned data to a CSV file
+### Write out the cleaned data to a CSV file
 
 ```{r}
 write_csv(fellows, "data/macarthur-mfd.csv")
 
-## Partital selection for class problem set:
-## fellows %>% select(name, year, age, sex) %>%
-## write_csv("~/Documents/courses/visualizingsociety.com/static/data/macarthur.csv")
+### Partital selection for class problem set:
+### fellows %>% select(name, year, age, sex) %>%
+### write_csv("~/Documents/courses/visualizingsociety.com/static/data/macarthur.csv")
 
 ```
 
@@ -308,9 +378,9 @@ write_csv(fellows, "data/macarthur-mfd.csv")
 
 # Make some plots
 
-## Age Distributions
+### Age Distributions
 
-```{r ages, fig.width = 12}
+```{r ages, fig.width = 12, layout="l-screen-inset"}
 
 p <- ggplot(data = fellows, 
               mapping = aes(x = year, y = age, group = year))
@@ -335,7 +405,7 @@ p + geom_jitter(alpha = 0.5, shape = 1, position = position_jitter()) +
         plot.caption = element_text(size = rel(1.1)))
 ```
 
-```{r agesex, fig.width = 12}
+```{r agesex, fig.width = 12, layout="l-screen-inset"}
 fellows %>%
   group_by(sex) %>%
   tally() %>%
@@ -356,11 +426,11 @@ fellows %>%
        title = "Age Distribution of MacArthur Winners over time")
 ```
 
-## Affiliation, Title, Area, and Location
+### Affiliation, Title, Area, and Location
 
 ```{r dotplot}
 
-## A convenience function to make the same kind of dotplot repeatedly
+### A convenience function to make the same kind of dotplot repeatedly
 mac_dotplot <- function(data, xvar = pct, yvar = n_lab, 
       x = NULL, y = NULL, title = NULL, 
       subtitle = NULL, 
@@ -382,7 +452,7 @@ mac_dotplot <- function(data, xvar = pct, yvar = n_lab,
 
 ```
 
-### Affiliation
+#### Affiliation
 
 ```{r affil-all, fig.height=12, fig.width=10}
 fellows %>% 
@@ -412,11 +482,12 @@ fellows %>%
   select(affil_short, n_lab, pct) %>%
   mac_dotplot(x = "Percent of All Awards", 
               title = "MacArthur Fellowships by Affiliation, 1981-2019", 
-              subtitle = "Institutions with three or more affiliated fellows. Excludes 'No Affiliation.'") 
+              subtitle = "Institutions with three or more affiliated fellows. 
+              Excludes 'No Affiliation.'") 
 ```
 
 
-### Title
+#### Title
 
 ```{r titles, fig.height=12, fig.width=10}
 fellows %>% 
@@ -446,10 +517,11 @@ fellows %>%
   select(n_lab, pct) %>%
   mac_dotplot(x = "Percent of All Awards", 
        title = "MacArthur Fellowships by Title, 1981-2019", 
-       subtitle = "Titles mentioned three or more times. Excludes 'No Title.'")
+       subtitle = "Titles mentioned three or more times. 
+       Excludes 'No Title.'")
 ```
 
-### Area
+#### Area
 
 ```{r areas, fig.height=12, fig.width=10}
 fellows %>% 
@@ -466,7 +538,7 @@ fellows %>%
               subtitle = "Areas with one percent or more of all awards")
 ```
 
-### Locations
+#### Locations
 
 ```{r locations, fig.height=12, fig.width=10}
 
@@ -492,7 +564,7 @@ fellows %>%
 
 ```
 
-# Session Information
+### Session Information
 
 ```{r}
 sessioninfo::session_info()
