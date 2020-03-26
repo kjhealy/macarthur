@@ -102,7 +102,7 @@ Here's a more involved example. We're going to scrape a lot of pages and extract
 
 ### Scrape the Website
 
-Get a List of all MacArthur Fellows from `macfound.org` and put them in a list. Don't do this more than once! This code is not evaluated when knitting the document, because we only have to do it once. When doing this yourself ss an excersie, please just choose, say 25 pages at random, with e.g. `sample(1:054, 25)` in place of `1:1054` in the line of code that makes the `urls` vector. 
+Get a List of all MacArthur Fellows from `macfound.org` and put them in a list. Don't do this more than once! This code is not evaluated when knitting the document, because we only have to do it once. When doing this yourself ss an excersie, please just choose, say, 25 pages at random, with e.g. `sample(1:054, 25)` in place of `1:1054` in the line of code that makes the `urls` vector. 
 
 ```{r, eval = FALSE, echo = TRUE}
 
@@ -124,7 +124,7 @@ bio_pages <- urls %>%
 
 There's a gotcha with objects like `bio_pages`: they cannot be straightforwardly saved to R's native data format with `save()`. The XML files are stored with external pointers to their content and cannot be "serialized" in a way that saves their content properly. If you try, when you `load()` the saved object you will get complaints about missing pointers. So instead, we'll unspool our list and save each fellow's page individually. Then if we want to rerun this analysis without crawling everything again, we will load them in from our local saved versions using `read_html()`.
 
-Again, this code chunk is shown but not run, as we only do it once. 
+Again, this code chunk is shown but not run, as we only do it once. Note that these pages are included in the GitHub repo.
 
 ```{r localsave, eval = FALSE, echo = TRUE}
 
